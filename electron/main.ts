@@ -10,8 +10,10 @@ import {
   shell,
   systemPreferences,
   screen,
+  type NativeImage,
 } from "electron";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { pasteViaAccessibility } from "./paste";
@@ -45,6 +47,32 @@ function resolveApiKey(): string {
 function preloadPath(): string {
   // vite-plugin-electron emits preload.mjs next to main
   return path.join(__dirname, "preload.mjs");
+}
+
+/** App icon: project assets/ (copied next to repo root jpeg). */
+function appIconPath(): string {
+  const candidates = [
+    path.join(process.cwd(), "assets", "whisper-flow-icon.jpeg"),
+    path.join(__dirname, "..", "assets", "whisper-flow-icon.jpeg"),
+    path.join(process.cwd(), "whisper-flow-icon.jpeg"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {
+      /* ignore */
+    }
+  }
+  return candidates[0];
+}
+
+function loadAppIcon(size?: number): NativeImage {
+  const img = nativeImage.createFromPath(appIconPath());
+  if (img.isEmpty()) return nativeImage.createEmpty();
+  if (size && size > 0) {
+    return img.resize({ width: size, height: size, quality: "best" });
+  }
+  return img;
 }
 
 function pageUrl(page: "overlay" | "settings"): string {
@@ -113,6 +141,7 @@ function createSettingsWindow(): BrowserWindow {
     height: 680,
     show: false,
     title: "WhisperFlow OSS",
+    icon: loadAppIcon(256),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -181,9 +210,8 @@ function hideOverlaySoon(ms = 800): void {
 }
 
 function createTray(): void {
-  const img = nativeImage.createFromDataURL(
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAWklEQVQ4T2NkYGD4z0ABYBzVMGoANQAZwMjIyPCfkZERqgEsgImBgYGBkZGRgYGBgQGkAUsDiAAjAwMDAyMjI1QDiAAjAwMDAyMjI8P///8Z/v//z8DIyMgA0gDiAwB+axEJxvW8VQAAAABJRU5ErkJggg==",
-  );
+  // Menu bar icons are small; 22px looks crisp on Retina when Electron scales
+  const img = loadAppIcon(22);
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
   tray.setToolTip("WhisperFlow OSS");
   tray.setContextMenu(
@@ -392,6 +420,11 @@ function wireIpc(): void {
 }
 
 app.whenReady().then(() => {
+  const icon = loadAppIcon(512);
+  if (!icon.isEmpty() && process.platform === "darwin") {
+    app.dock?.setIcon(icon);
+  }
+  // Tray-first MVP: hide dock until Settings is opened (still uses our icon)
   if (process.platform === "darwin") app.dock?.hide();
 
   // Load settings after app ready so userData path resolves
