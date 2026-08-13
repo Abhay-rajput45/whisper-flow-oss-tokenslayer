@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WhisperFlow OSS — Settings</title>
+    <link rel="stylesheet" href="/src/settings/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <h1>WhisperFlow OSS</h1>
+        <p class="sub">Type with your voice, everywhere — macOS MVP on PyAI Hear</p>
+      </header>
+
+      <section class="card">
+        <h2>API key</h2>
+        <p class="hint">
+          Stored in app userData (mode 0600). Prefer env <code>PYAI_API_KEY</code> for local dev.
+          Needs <code>hear:stream</code> + chat/NFuse access.
+        </p>
+        <label>
+          PyAI API key
+          <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="pyai_…" />
+        </label>
+        <p id="keyStatus" class="status"></p>
+      </section>
+
+      <section class="card">
+        <h2>Hotkey</h2>
+        <p class="hint">Tap once to start listening, tap again to polish + paste. Electron cannot reliably capture key-up for global shortcuts.</p>
+        <label>
+          Accelerator
+          <input id="hotkey" type="text" placeholder="Alt+Space" />
+        </label>
+        <p class="hint">Examples: <code>Alt+Space</code>, <code>Command+Shift+Space</code>, <code>F6</code></p>
+      </section>
+
+      <section class="card">
+        <h2>Polish</h2>
+        <label>
+          Timeout (ms) — paste raw Hear text if polish is slower
+          <input id="polishTimeout" type="number" min="100" max="2000" step="50" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Dictionary</h2>
+        <p class="hint">Names and jargon the polish step should prefer.</p>
+        <div class="row">
+          <input id="dictInput" type="text" maxlength="64" placeholder="Add a term…" />
+          <button id="dictAdd" type="button">Add</button>
+        </div>
+        <ul id="dictList" class="dict"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Permissions</h2>
+        <button id="checkPerms" type="button">Check mic + Accessibility</button>
+        <pre id="permOut" class="perm"></pre>
+        <p class="hint">Accessibility is required to paste with Cmd+V into the focused app.</p>
+      </section>
+
+      <section class="card">
+        <h2>Frontmost app tone</h2>
+        <button id="refreshTone" type="button">Detect now</button>
+        <p id="toneOut" class="status"></p>
+      </section>
+
+      <div class="actions">
+        <button id="save" type="button" class="primary">Save</button>
+        <span id="toast" class="toast"></span>
+      </div>
+    </main>
+    <script type="module" src="/src/settings/main.ts"></script>
+  </body>
+</html>

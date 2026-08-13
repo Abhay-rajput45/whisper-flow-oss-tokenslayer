@@ -1,0 +1,333 @@
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  clipboard,
+  Tray,
+  Menu,
+  nativeImage,
+  shell,
+  systemPreferences,
+  screen,
+} from "electron";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+import { pasteViaAccessibility } from "./paste";
+import { getFrontmostApp } from "./frontmost";
+import { loadSettings, saveSettings, type AppSettings } from "./settings-store";
+import { checkAccessibility } from "./permissions";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+dotenv.config({ path: path.join(process.cwd(), ".env") });
+
+const isDev = !app.isPackaged;
+let quitting = false;
+
+let overlayWin: BrowserWindow | null = null;
+let settingsWin: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let pttHeld = false;
+let settings: AppSettings = loadSettings();
+
+function resolveApiKey(): string {
+  const fromSettings = settings.apiKey?.trim() ?? "";
+  if (fromSettings) return fromSettings;
+  return process.env.PYAI_API_KEY?.trim() ?? "";
+}
+
+function preloadPath(): string {
+  // vite-plugin-electron emits preload.mjs next to main
+  return path.join(__dirname, "preload.mjs");
+}
+
+function pageUrl(page: "overlay" | "settings"): string {
+  if (isDev) {
+    const base = process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173";
+    return `${base}/${page}.html`;
+  }
+  return path.join(__dirname, "../dist", `${page}.html`);
+}
+
+function createOverlayWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 720,
+    height: 120,
+    show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    focusable: false,
+    hasShadow: false,
+    type: "panel",
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  if (isDev) {
+    void win.loadURL(pageUrl("overlay"));
+  } else {
+    void win.loadFile(pageUrl("overlay"));
+  }
+
+  return win;
+}
+
+function createSettingsWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 520,
+    height: 680,
+    show: false,
+    title: "WhisperFlow OSS",
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  if (isDev) {
+    void win.loadURL(pageUrl("settings"));
+  } else {
+    void win.loadFile(pageUrl("settings"));
+  }
+
+  win.on("close", (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+
+  return win;
+}
+
+function centerOverlay(): void {
+  if (!overlayWin) return;
+  const display = screen.getPrimaryDisplay();
+  const { width, height } = display.workAreaSize;
+  const [ww] = overlayWin.getSize();
+  const wh = overlayWin.getSize()[1];
+  overlayWin.setPosition(
+    Math.round((width - ww) / 2) + display.workArea.x,
+    Math.round(height * 0.72) + display.workArea.y,
+  );
+}
+
+function showOverlay(): void {
+  if (!overlayWin) return;
+  centerOverlay();
+  overlayWin.showInactive();
+}
+
+function hideOverlaySoon(ms = 800): void {
+  setTimeout(() => {
+    if (!pttHeld && overlayWin?.isVisible()) overlayWin.hide();
+  }, ms);
+}
+
+function createTray(): void {
+  const img = nativeImage.createFromDataURL(
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAWklEQVQ4T2NkYGD4z0ABYBzVMGoANQAZwMjIyPCfkZERqgEsgImBgYGBkZGRgYGBgQGkAUsDiAAjAwMDAyMjI1QDiAAjAwMDAyMjI8P///8Z/v//z8DIyMgA0gDiAwB+axEJxvW8VQAAAABJRU5ErkJggg==",
+  );
+  tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+  tray.setToolTip("WhisperFlow OSS");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Settings…",
+        click: () => {
+          settingsWin ??= createSettingsWindow();
+          settingsWin.show();
+          settingsWin.focus();
+        },
+      },
+      {
+        label: "Check Accessibility…",
+        click: () => checkAccessibility(true),
+      },
+      { type: "separator" },
+      {
+        label: "Docs (PyAI Hear)",
+        click: () => {
+          void shell.openExternal(
+            "https://docs.pyai.com/use-cases/build-your-own-wispr-flow",
+          );
+        },
+      },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on("click", () => {
+    settingsWin ??= createSettingsWindow();
+    settingsWin.show();
+    settingsWin.focus();
+  });
+}
+
+function registerHotkey(): boolean {
+  globalShortcut.unregisterAll();
+  const accelerator = settings.hotkey || "Alt+Space";
+  const ok = globalShortcut.register(accelerator, () => {
+    void togglePtt();
+  });
+  if (!ok) console.error("Failed to register hotkey:", accelerator);
+  return ok;
+}
+
+/** Tap to start / tap to finish (Electron globalShortcut has no keyup). */
+async function togglePtt(): Promise<void> {
+  if (!pttHeld) {
+    const key = resolveApiKey();
+    if (!key) {
+      settingsWin ??= createSettingsWindow();
+      settingsWin.show();
+      settingsWin.webContents.send(
+        "toast",
+        "Set PYAI_API_KEY in Settings first.",
+      );
+      return;
+    }
+    pttHeld = true;
+    const front = await getFrontmostApp();
+    showOverlay();
+    overlayWin?.webContents.send("ptt-start", {
+      apiKey: key,
+      toneHint: front.tone,
+      bundleId: front.bundleId,
+      appName: front.name,
+      dictionary: settings.dictionary,
+      polishTimeoutMs: settings.polishTimeoutMs,
+    });
+  } else {
+    pttHeld = false;
+    overlayWin?.webContents.send("ptt-stop");
+  }
+}
+
+function wireIpc(): void {
+  ipcMain.handle("get-settings", () => {
+    const { apiKey, ...rest } = settings;
+    return {
+      ...rest,
+      apiKeySet: Boolean(apiKey || process.env.PYAI_API_KEY),
+      apiKeyMasked: apiKey
+        ? `${apiKey.slice(0, 8)}…`
+        : process.env.PYAI_API_KEY
+          ? "(from env)"
+          : "",
+    };
+  });
+
+  ipcMain.handle("save-settings", (_e, patch: Partial<AppSettings>) => {
+    if (patch.apiKey !== undefined) {
+      const k = String(patch.apiKey).trim();
+      if (k.length > 0 && k.length < 8) {
+        throw new Error("API key looks too short");
+      }
+      if (k.includes("…") || k === "(from env)") {
+        delete patch.apiKey;
+      }
+    }
+    if (patch.dictionary) {
+      patch.dictionary = patch.dictionary
+        .map((d) => String(d).trim())
+        .filter(Boolean)
+        .slice(0, 200)
+        .map((d) => d.slice(0, 64));
+    }
+    if (patch.hotkey) patch.hotkey = String(patch.hotkey).slice(0, 64);
+    if (patch.polishTimeoutMs !== undefined) {
+      const n = Number(patch.polishTimeoutMs);
+      patch.polishTimeoutMs = Number.isFinite(n)
+        ? Math.min(2000, Math.max(100, Math.round(n)))
+        : 400;
+    }
+    settings = saveSettings({ ...settings, ...patch });
+    registerHotkey();
+    return { ok: true };
+  });
+
+  ipcMain.handle("get-frontmost", async () => getFrontmostApp());
+
+  ipcMain.handle("paste-text", async (_e, text: string) => {
+    const plain = String(text ?? "").slice(0, 50_000);
+    if (!plain) return { ok: false, reason: "empty" };
+    clipboard.writeText(plain);
+    const pasted = await pasteViaAccessibility();
+    hideOverlaySoon(800);
+    return { ok: pasted };
+  });
+
+  ipcMain.handle("hide-overlay", () => {
+    hideOverlaySoon(0);
+  });
+
+  ipcMain.handle("check-permissions", async () => {
+    const accessibility = checkAccessibility(false);
+    let microphone = "unknown";
+    if (process.platform === "darwin") {
+      const status = systemPreferences.getMediaAccessStatus("microphone");
+      microphone = status;
+      if (status !== "granted") {
+        await systemPreferences.askForMediaAccess("microphone");
+        microphone = systemPreferences.getMediaAccessStatus("microphone");
+      }
+    }
+    return { accessibility, microphone };
+  });
+
+  ipcMain.on("overlay-resize", (_e, height: number) => {
+    if (!overlayWin) return;
+    const h = Math.min(280, Math.max(80, Math.round(height)));
+    overlayWin.setSize(720, h);
+    centerOverlay();
+  });
+}
+
+app.whenReady().then(() => {
+  if (process.platform === "darwin") app.dock?.hide();
+
+  // Load settings after app ready so userData path resolves
+  settings = loadSettings();
+
+  overlayWin = createOverlayWindow();
+  settingsWin = createSettingsWindow();
+  createTray();
+  wireIpc();
+  registerHotkey();
+
+  if (!resolveApiKey()) settingsWin.show();
+
+  console.log(
+    `WhisperFlow OSS ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
+  );
+});
+
+app.on("will-quit", () => {
+  quitting = true;
+  globalShortcut.unregisterAll();
+});
+
+app.on("window-all-closed", () => {
+  // Stay alive in the tray on macOS; do not quit when settings/overlay hide.
+});

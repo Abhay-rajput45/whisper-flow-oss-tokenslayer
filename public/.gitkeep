@@ -1,0 +1,2 @@
+# Electron security / CSP notes for renderer HTML
+# API calls go to api.pyai.com from the overlay renderer (Hear WS + polish HTTP).

@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+  --bg: rgba(18, 20, 24, 0.82);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f4f5f7;
+  --pending: #9aa3b2;
+  --meta: #6b7380;
+  --accent: #5eead4;
+  font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.hud {
+  margin: 8px 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  min-height: 56px;
+}
+
+.line {
+  font-size: 18px;
+  line-height: 1.35;
+  color: var(--text);
+  min-height: 1.35em;
+  word-break: break-word;
+}
+
+.committed {
+  color: var(--text);
+}
+
+.pending {
+  color: var(--pending);
+  font-style: italic;
+}
+
+.pending:not(:empty)::before {
+  content: " ";
+}
+
+.meta {
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--meta);
+}
+
+.meta:empty {
+  display: none;
+}
