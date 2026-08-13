@@ -83,6 +83,18 @@ Default: `Alt+Space`. **Tap to start / tap to finish** (Electron `globalShortcut
 - [PyAI Hear streaming](https://docs.pyai.com/guides/streaming-stt)
 - PyAI OpenAI-compatible `/v1/chat/completions` (`pyai-nfuse`) for polish
 
+## Publish (public GitHub)
+
+`gh` is required and must be logged in once:
+
+```bash
+gh auth login
+git branch -m main
+git tag v0.1.0-hackathon
+gh repo create whisper-flow-oss-tokenslayer --public --source=. --remote=origin --push
+git push origin v0.1.0-hackathon
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
