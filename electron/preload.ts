@@ -15,11 +15,26 @@ export type PttStartPayload = {
   polishTimeoutMs: number;
 };
 
+export type PolishRequest = {
+  text: string;
+  tone: "casual" | "formal" | "neutral";
+  dictionary: string[];
+  timeoutMs: number;
+};
+
+export type PolishResult = {
+  text: string;
+  polished: boolean;
+  ms: number;
+};
+
 const api = {
   getSettings: () => ipcRenderer.invoke("get-settings"),
   saveSettings: (patch: Record<string, unknown>) =>
     ipcRenderer.invoke("save-settings", patch),
   getFrontmost: (): Promise<FrontmostInfo> => ipcRenderer.invoke("get-frontmost"),
+  polishText: (input: PolishRequest): Promise<PolishResult> =>
+    ipcRenderer.invoke("polish-text", input),
   pasteText: (text: string) => ipcRenderer.invoke("paste-text", text),
   hideOverlay: () => ipcRenderer.invoke("hide-overlay"),
   checkPermissions: () => ipcRenderer.invoke("check-permissions"),

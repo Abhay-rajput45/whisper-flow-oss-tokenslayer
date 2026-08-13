@@ -1,5 +1,4 @@
 import { startMic, type MicHandle } from "../audio/mic";
-import { polishText } from "../polish/polish";
 import {
   createSession,
   markSpeechStart,
@@ -37,6 +36,32 @@ function paint(): void {
   window.whisperFlow.resizeOverlay(els.root.scrollHeight + 24);
 }
 
+function buildPasteText(): string {
+  const committed = committedText(session);
+  const pending = session.pending.trim();
+  if (committed && pending) return `${committed} ${pending}`.trim();
+  return (committed || pending).trim();
+}
+
+/** After commit, keep mic open briefly so Hear can flush remaining finals. */
+async function waitForFlush(maxMs = 1200): Promise<void> {
+  const start = performance.now();
+  let lastLen = buildPasteText().length;
+  let stableFor = 0;
+  while (performance.now() - start < maxMs) {
+    await new Promise((r) => setTimeout(r, 120));
+    paint();
+    const len = buildPasteText().length;
+    if (len === lastLen && (!session.pending || session.pending.trim() === "")) {
+      stableFor += 120;
+      if (stableFor >= 240 && len > 0) break;
+    } else {
+      stableFor = 0;
+      lastLen = len;
+    }
+  }
+}
+
 async function startSession(p: PttStartPayload): Promise<void> {
   if (finishing) return;
   await stopCaptureOnly();
@@ -55,9 +80,8 @@ async function startSession(p: PttStartPayload): Promise<void> {
         onFinal(session, text);
         paint();
       },
-      onError: (code, message) => {
+      onError: (code) => {
         els.meta.textContent = `error: ${code}`;
-        console.error("hear-stream error:", code, message);
       },
     });
     mic = await startMic((buf) => hear?.sendPcm16(buf));
@@ -82,12 +106,12 @@ async function finishSession(): Promise<void> {
 
   try {
     hear?.commit();
-    // Brief wait for final flush after commit
-    await new Promise((r) => setTimeout(r, 280));
+    els.meta.textContent = "finalizing…";
+    paint();
+    await waitForFlush(1200);
     await stopCaptureOnly();
 
-    let raw = committedText(session);
-    if (!raw && session.pending.trim()) raw = session.pending.trim();
+    const raw = buildPasteText();
 
     if (!raw || !payload) {
       els.meta.textContent = "nothing to paste";
@@ -101,12 +125,11 @@ async function finishSession(): Promise<void> {
     els.meta.textContent = "polishing…";
     paint();
 
-    const result = await polishText({
+    const result = await window.whisperFlow.polishText({
       text: raw,
-      apiKey: payload.apiKey,
       tone: payload.toneHint,
       dictionary: payload.dictionary ?? [],
-      timeoutMs: payload.polishTimeoutMs ?? 400,
+      timeoutMs: Math.max(payload.polishTimeoutMs ?? 400, 1200),
     });
 
     els.committed.textContent = result.text;

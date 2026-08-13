@@ -93,7 +93,7 @@ export class HearClient {
         try {
           this.handleFrame(JSON.parse(e.data) as Record<string, unknown>);
         } catch {
-          // ignore malformed
+          /* ignore malformed */
         }
       };
     });
@@ -130,13 +130,8 @@ export class HearClient {
       typeof msg.utterance_id === "string" ? msg.utterance_id : undefined;
 
     switch (type) {
-      case "config_ack": {
-        const warnings = Array.isArray(msg.warnings) ? msg.warnings : [];
-        if (warnings.length > 0) {
-          console.warn("endpointing config warning:", warnings);
-        }
+      case "config_ack":
         break;
-      }
       case "partial":
       case "partial_stable":
         this.handlers.onPartial(text, utteranceId);
@@ -144,7 +139,6 @@ export class HearClient {
       case "speech_final":
       case "final": {
         if (utteranceId && this.committedUtterances.has(utteranceId)) {
-          // Already committed from speech_final; skip duplicate final
           if (type === "final") break;
         }
         if (utteranceId) this.committedUtterances.add(utteranceId);

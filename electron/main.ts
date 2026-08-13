@@ -18,6 +18,8 @@ import { pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
 import { loadSettings, saveSettings, type AppSettings } from "./settings-store";
 import { checkAccessibility } from "./permissions";
+import { polishText, type PolishInput } from "./polish";
+import type { Tone } from "./tones";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +33,8 @@ let settingsWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let pttHeld = false;
 let settings: AppSettings = loadSettings();
+/** Frontmost app at PTT start — used to restore focus before paste */
+let targetAppName = "";
 
 function resolveApiKey(): string {
   const fromSettings = settings.apiKey?.trim() ?? "";
@@ -75,6 +79,18 @@ function createOverlayWindow(): BrowserWindow {
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
+  // Don't destroy on close (Cmd+W / accidental) — tray app needs a live overlay
+  win.on("close", (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+
+  win.on("closed", () => {
+    if (overlayWin === win) overlayWin = null;
+  });
+
   if (isDev) {
     void win.loadURL(pageUrl("overlay"));
   } else {
@@ -82,6 +98,13 @@ function createOverlayWindow(): BrowserWindow {
   }
 
   return win;
+}
+
+function ensureOverlay(): BrowserWindow {
+  if (!overlayWin || overlayWin.isDestroyed()) {
+    overlayWin = createOverlayWindow();
+  }
+  return overlayWin;
 }
 
 function createSettingsWindow(): BrowserWindow {
@@ -111,30 +134,49 @@ function createSettingsWindow(): BrowserWindow {
     }
   });
 
+  win.on("closed", () => {
+    if (settingsWin === win) settingsWin = null;
+  });
+
   return win;
 }
 
 function centerOverlay(): void {
-  if (!overlayWin) return;
-  const display = screen.getPrimaryDisplay();
-  const { width, height } = display.workAreaSize;
-  const [ww] = overlayWin.getSize();
-  const wh = overlayWin.getSize()[1];
-  overlayWin.setPosition(
-    Math.round((width - ww) / 2) + display.workArea.x,
-    Math.round(height * 0.72) + display.workArea.y,
-  );
+  const win = ensureOverlay();
+  if (win.isDestroyed()) return;
+  try {
+    const display = screen.getPrimaryDisplay();
+    const { width, height } = display.workAreaSize;
+    const [ww, wh] = win.getSize();
+    win.setPosition(
+      Math.round((width - ww) / 2) + display.workArea.x,
+      Math.round(height * 0.72) + display.workArea.y,
+    );
+  } catch {
+    /* window may race-destroy between checks */
+  }
 }
 
 function showOverlay(): void {
-  if (!overlayWin) return;
-  centerOverlay();
-  overlayWin.showInactive();
+  const win = ensureOverlay();
+  if (win.isDestroyed()) return;
+  try {
+    centerOverlay();
+    win.showInactive();
+  } catch {
+    /* ignore */
+  }
 }
 
 function hideOverlaySoon(ms = 800): void {
   setTimeout(() => {
-    if (!pttHeld && overlayWin?.isVisible()) overlayWin.hide();
+    if (pttHeld) return;
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    try {
+      if (overlayWin.isVisible()) overlayWin.hide();
+    } catch {
+      /* ignore */
+    }
   }, ms);
 }
 
@@ -196,31 +238,49 @@ function registerHotkey(): boolean {
 
 /** Tap to start / tap to finish (Electron globalShortcut has no keyup). */
 async function togglePtt(): Promise<void> {
-  if (!pttHeld) {
-    const key = resolveApiKey();
-    if (!key) {
-      settingsWin ??= createSettingsWindow();
-      settingsWin.show();
-      settingsWin.webContents.send(
-        "toast",
-        "Set PYAI_API_KEY in Settings first.",
-      );
-      return;
+  try {
+    if (!pttHeld) {
+      const key = resolveApiKey();
+      if (!key) {
+        settingsWin ??= createSettingsWindow();
+        if (!settingsWin.isDestroyed()) {
+          settingsWin.show();
+          settingsWin.focus();
+          settingsWin.webContents.send(
+            "toast",
+            "Set PYAI_API_KEY in Settings first.",
+          );
+        }
+        return;
+      }
+      pttHeld = true;
+      const front = await getFrontmostApp();
+      targetAppName = front.name;
+      const win = ensureOverlay();
+      showOverlay();
+      if (!win.isDestroyed()) {
+        win.webContents.send("ptt-start", {
+          apiKey: key,
+          toneHint: front.tone,
+          bundleId: front.bundleId,
+          appName: front.name,
+          dictionary: settings.dictionary,
+          polishTimeoutMs: settings.polishTimeoutMs,
+        });
+      }
+    } else {
+      pttHeld = false;
+      const win = overlayWin;
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("ptt-stop");
+      }
     }
-    pttHeld = true;
-    const front = await getFrontmostApp();
-    showOverlay();
-    overlayWin?.webContents.send("ptt-start", {
-      apiKey: key,
-      toneHint: front.tone,
-      bundleId: front.bundleId,
-      appName: front.name,
-      dictionary: settings.dictionary,
-      polishTimeoutMs: settings.polishTimeoutMs,
-    });
-  } else {
+  } catch (err) {
     pttHeld = false;
-    overlayWin?.webContents.send("ptt-stop");
+    console.error(
+      "togglePtt failed:",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 
@@ -269,13 +329,36 @@ function wireIpc(): void {
 
   ipcMain.handle("get-frontmost", async () => getFrontmostApp());
 
+  ipcMain.handle("polish-text", async (_e, input: PolishInput) => {
+    const key = resolveApiKey();
+    return polishText({
+      text: String(input?.text ?? ""),
+      apiKey: key,
+      tone: (input?.tone as Tone) || "neutral",
+      dictionary: Array.isArray(input?.dictionary)
+        ? input.dictionary.map(String).slice(0, 200)
+        : [],
+      timeoutMs:
+        typeof input?.timeoutMs === "number" ? input.timeoutMs : 400,
+    });
+  });
+
   ipcMain.handle("paste-text", async (_e, text: string) => {
     const plain = String(text ?? "").slice(0, 50_000);
     if (!plain) return { ok: false, reason: "empty" };
+
+    // Hide overlay first so Cmd+V lands in the user's editor
+    if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
+      overlayWin.hide();
+    }
+
     clipboard.writeText(plain);
-    const pasted = await pasteViaAccessibility();
-    hideOverlaySoon(800);
-    return { ok: pasted };
+    const pasted = await pasteViaAccessibility({
+      activateAppName: targetAppName,
+      delayMs: 200,
+    });
+    hideOverlaySoon(400);
+    return { ok: pasted, chars: plain.length };
   });
 
   ipcMain.handle("hide-overlay", () => {
@@ -297,10 +380,14 @@ function wireIpc(): void {
   });
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
-    if (!overlayWin) return;
-    const h = Math.min(280, Math.max(80, Math.round(height)));
-    overlayWin.setSize(720, h);
-    centerOverlay();
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    try {
+      const h = Math.min(280, Math.max(80, Math.round(height)));
+      overlayWin.setSize(720, h);
+      centerOverlay();
+    } catch {
+      /* ignore */
+    }
   });
 }
 
