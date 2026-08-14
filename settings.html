@@ -15,16 +15,21 @@
       </header>
 
       <section class="card">
-        <h2>API key</h2>
+        <h2>API keys</h2>
         <p class="hint">
-          Stored in app userData (mode 0600). Prefer env <code>PYAI_API_KEY</code> for local dev.
-          Needs <code>hear:stream</code> + chat/NFuse access.
+          Stored in app userData (mode 0600). Prefer env <code>PYAI_API_KEY</code> /
+          <code>GEMINI_API_KEY</code> for local dev.
         </p>
         <label>
-          PyAI API key
+          PyAI API key — speech to text (needs <code>hear:stream</code>)
           <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="pyai_…" />
         </label>
         <p id="keyStatus" class="status"></p>
+        <label>
+          Gemini API key — polish
+          <input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
+        </label>
+        <p id="geminiKeyStatus" class="status"></p>
       </section>
 
       <section class="card">
@@ -39,9 +44,13 @@
 
       <section class="card">
         <h2>Polish</h2>
+        <p class="hint">
+          Model: <code id="polishModel">—</code>. Measured ~800–1400 ms, so budgets
+          under ~1500 ms will fall back to raw text on most calls.
+        </p>
         <label>
           Timeout (ms) — paste raw Hear text if polish is slower
-          <input id="polishTimeout" type="number" min="100" max="2000" step="50" />
+          <input id="polishTimeout" type="number" min="100" max="4000" step="50" />
         </label>
       </section>
 

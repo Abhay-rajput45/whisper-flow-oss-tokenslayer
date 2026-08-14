@@ -10,6 +10,9 @@
     "start": "electron .",
     "electron:dev": "vite",
     "self-check": "node --experimental-strip-types scripts/self-check.ts",
+    "polish-check": "node --experimental-strip-types scripts/polish-check.ts",
+    "hear-probe": "node scripts/hear-probe.mjs",
+    "mic-probe": "electron scripts/mic-probe.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "prestart": "npm run build"
   },

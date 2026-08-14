@@ -1,15 +1,19 @@
 const apiKeyEl = document.getElementById("apiKey") as HTMLInputElement;
+const geminiKeyEl = document.getElementById("geminiApiKey") as HTMLInputElement;
 const hotkeyEl = document.getElementById("hotkey") as HTMLInputElement;
 const polishEl = document.getElementById("polishTimeout") as HTMLInputElement;
 const dictInput = document.getElementById("dictInput") as HTMLInputElement;
 const dictList = document.getElementById("dictList") as HTMLUListElement;
 const keyStatus = document.getElementById("keyStatus")!;
+const geminiKeyStatus = document.getElementById("geminiKeyStatus")!;
+const polishModelEl = document.getElementById("polishModel")!;
 const toast = document.getElementById("toast")!;
 const permOut = document.getElementById("permOut")!;
 const toneOut = document.getElementById("toneOut")!;
 
 let dictionary: string[] = [];
 let apiKeyDirty = false;
+let geminiKeyDirty = false;
 
 function showToast(msg: string): void {
   toast.textContent = msg;
@@ -43,15 +47,25 @@ async function load(): Promise<void> {
     polishTimeoutMs: number;
     apiKeySet: boolean;
     apiKeyMasked: string;
+    geminiKeySet: boolean;
+    geminiKeyMasked: string;
+    polishModel: string;
   };
   hotkeyEl.value = s.hotkey || "Alt+Space";
-  polishEl.value = String(s.polishTimeoutMs ?? 400);
+  polishEl.value = String(s.polishTimeoutMs ?? 2000);
   dictionary = Array.isArray(s.dictionary) ? [...s.dictionary] : [];
   renderDict();
   keyStatus.textContent = s.apiKeySet
     ? `Key configured: ${s.apiKeyMasked}`
     : "No key set — paste one below or export PYAI_API_KEY";
   apiKeyEl.placeholder = s.apiKeySet ? "•••••••• (leave blank to keep)" : "pyai_…";
+  geminiKeyStatus.textContent = s.geminiKeySet
+    ? `Key configured: ${s.geminiKeyMasked}`
+    : "No key set — polish will paste raw text";
+  geminiKeyEl.placeholder = s.geminiKeySet
+    ? "•••••••• (leave blank to keep)"
+    : "AIza…";
+  polishModelEl.textContent = s.polishModel || "—";
 }
 
 document.getElementById("dictAdd")!.addEventListener("click", () => {
@@ -77,19 +91,28 @@ apiKeyEl.addEventListener("input", () => {
   apiKeyDirty = true;
 });
 
+geminiKeyEl.addEventListener("input", () => {
+  geminiKeyDirty = true;
+});
+
 document.getElementById("save")!.addEventListener("click", async () => {
   try {
     const patch: Record<string, unknown> = {
       hotkey: hotkeyEl.value.trim() || "Alt+Space",
       dictionary,
-      polishTimeoutMs: Number(polishEl.value) || 400,
+      polishTimeoutMs: Number(polishEl.value) || 2000,
     };
     if (apiKeyDirty && apiKeyEl.value.trim()) {
       patch.apiKey = apiKeyEl.value.trim();
     }
+    if (geminiKeyDirty && geminiKeyEl.value.trim()) {
+      patch.geminiApiKey = geminiKeyEl.value.trim();
+    }
     await window.whisperFlow.saveSettings(patch);
     apiKeyDirty = false;
+    geminiKeyDirty = false;
     apiKeyEl.value = "";
+    geminiKeyEl.value = "";
     await load();
     showToast("Saved");
   } catch (err) {
