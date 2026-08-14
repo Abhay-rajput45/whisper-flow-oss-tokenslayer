@@ -18,7 +18,7 @@ import { activateApp, pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
 import { loadSettings, saveSettings, type AppSettings, DEFAULTS } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
-import { polishText, type PolishInput } from "./polish";
+import { polishText, polishModel, type PolishInput } from "./polish";
 import type { Tone } from "./tones";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,10 +36,18 @@ let settings: AppSettings = { ...DEFAULTS };
 /** Frontmost app at PTT start — used to restore focus before paste */
 let targetAppName = "";
 
+/** PyAI key — streaming STT (Hear) only. */
 function resolveApiKey(): string {
   const fromSettings = settings.apiKey?.trim() ?? "";
   if (fromSettings) return fromSettings;
   return process.env.PYAI_API_KEY?.trim() ?? "";
+}
+
+/** Gemini key — polish only. Kept separate so one bad key can't break both. */
+function resolvePolishKey(): string {
+  const fromSettings = settings.geminiApiKey?.trim() ?? "";
+  if (fromSettings) return fromSettings;
+  return process.env.GEMINI_API_KEY?.trim() ?? "";
 }
 
 function preloadPath(): string {
@@ -322,7 +330,8 @@ async function togglePtt(): Promise<void> {
 
 function wireIpc(): void {
   ipcMain.handle("get-settings", () => {
-    const { apiKey, ...rest } = settings;
+    // Never return raw keys to the renderer — only "is it set" + a masked hint.
+    const { apiKey, geminiApiKey, ...rest } = settings;
     return {
       ...rest,
       apiKeySet: Boolean(apiKey || process.env.PYAI_API_KEY),
@@ -331,6 +340,13 @@ function wireIpc(): void {
         : process.env.PYAI_API_KEY
           ? "(from env)"
           : "",
+      geminiKeySet: Boolean(geminiApiKey || process.env.GEMINI_API_KEY),
+      geminiKeyMasked: geminiApiKey
+        ? `${geminiApiKey.slice(0, 8)}…`
+        : process.env.GEMINI_API_KEY
+          ? "(from env)"
+          : "",
+      polishModel: polishModel(),
     };
   });
 
@@ -342,6 +358,16 @@ function wireIpc(): void {
       }
       if (k.includes("…") || k === "(from env)") {
         delete patch.apiKey;
+      }
+    }
+    if (patch.geminiApiKey !== undefined) {
+      const k = String(patch.geminiApiKey).trim();
+      if (k.length > 0 && k.length < 8) {
+        throw new Error("Gemini API key looks too short");
+      }
+      // Guard against saving the masked placeholder back over the real key.
+      if (k.includes("…") || k === "(from env)") {
+        delete patch.geminiApiKey;
       }
     }
     if (patch.dictionary) {
@@ -357,8 +383,8 @@ function wireIpc(): void {
     if (patch.polishTimeoutMs !== undefined) {
       const n = Number(patch.polishTimeoutMs);
       patch.polishTimeoutMs = Number.isFinite(n)
-        ? Math.min(2000, Math.max(100, Math.round(n)))
-        : 400;
+        ? Math.min(4000, Math.max(100, Math.round(n)))
+        : 2000;
     }
     const prevHotkey = settings.hotkey;
     const requestedHotkey = patch.hotkey;
@@ -389,8 +415,10 @@ function wireIpc(): void {
   ipcMain.handle("get-frontmost", async () => getFrontmostApp());
 
   ipcMain.handle("polish-text", async (_e, input: PolishInput) => {
-    const key = resolveApiKey();
-    return polishText({
+    const key = resolvePolishKey();
+    const budget =
+      typeof input?.timeoutMs === "number" ? input.timeoutMs : 2000;
+    const result = await polishText({
       text: String(input?.text ?? ""),
       apiKey: key,
       tone: (input?.tone as Tone) || "neutral",
@@ -399,6 +427,20 @@ function wireIpc(): void {
         : [],
       timeoutMs: settings.polishTimeoutMs,
     });
+    // "Polish looks like it didn't run" is indistinguishable from "it ran fast"
+    // without this. Dev only — never log polished text in a packaged build.
+    if (isDev) {
+      const why = !key
+        ? "NO KEY"
+        : result.polished
+          ? "polished"
+          : `fell back (budget ${budget}ms)`;
+      console.log(`[polish] ${why} in ${result.ms}ms via ${polishModel()}`);
+      if (!result.polished && key) {
+        console.log(`[polish] raw kept: ${JSON.stringify(result.text.slice(0, 120))}`);
+      }
+    }
+    return result;
   });
 
   ipcMain.handle("paste-text", async (_e, text: string) => {
@@ -471,6 +513,11 @@ app.whenReady().then(() => {
 
   console.log(
     `WhisperFlow OSS ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
+  );
+  console.log(
+    `  STT    : PyAI Hear ${resolveApiKey() ? "(key set)" : "(NO KEY)"}\n` +
+      `  polish : ${polishModel()} ` +
+      `${resolvePolishKey() ? "(key set)" : "(NO KEY — will paste raw text)"}`,
   );
 });
 
