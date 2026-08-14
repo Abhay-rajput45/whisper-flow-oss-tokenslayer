@@ -7,7 +7,6 @@ import {
   Tray,
   Menu,
   nativeImage,
-  shell,
   screen,
   type NativeImage,
 } from "electron";
@@ -226,15 +225,6 @@ function createTray(): void {
       {
         label: "Check Accessibility…",
         click: () => checkAccessibility(true),
-      },
-      { type: "separator" },
-      {
-        label: "Docs (PyAI Hear)",
-        click: () => {
-          void shell.openExternal(
-            "https://docs.pyai.com/use-cases/build-your-own-wispr-flow",
-          );
-        },
       },
       { type: "separator" },
       {
