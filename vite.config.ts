@@ -27,9 +27,14 @@ export default defineConfig({
         vite: {
           build: {
             outDir: "dist-electron",
+            target: "node22",
             rollupOptions: {
-              external: ["electron", "dotenv"],
+              external: ["electron", "dotenv", "ws"],
             },
+          },
+          resolve: {
+            // Prefer Node resolution so `ws` is not the browser stub
+            conditions: ["node", "import", "module", "default"],
           },
         },
       },

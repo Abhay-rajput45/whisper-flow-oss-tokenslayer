@@ -7,8 +7,13 @@ import {
   committedText,
   displayCommitted,
 } from "../state/session";
-import { acquireHear, parkHear } from "../hear/warm";
 import type { PttStartPayload } from "../../electron/preload";
+
+const FLUSH_MAX_MS = 420;
+const FLUSH_POLL_MS = 60;
+const FLUSH_STABLE_MS = 120;
+const PCM_QUEUE_MAX = 80;
+const DEFAULT_POLISH_TIMEOUT_MS = 700;
 
 const els = {
   committed: document.getElementById("committed")!,
@@ -20,23 +25,34 @@ const els = {
 };
 
 let session = createSession();
-let hear: Awaited<ReturnType<typeof acquireHear>> | null = null;
 let mic: MicHandle | null = null;
 let payload: PttStartPayload | null = null;
 let finishing = false;
+let banner = "";
+let pcmQueue: ArrayBuffer[] = [];
+let hearReady = false;
+
+function setBanner(msg: string): void {
+  banner = msg;
+  paint();
+}
 
 function paint(): void {
   els.committed.textContent = displayCommitted(session);
   els.pending.textContent = session.pending;
   els.cancelBtn.disabled = finishing;
   els.saveBtn.disabled = finishing;
-  const parts: string[] = [];
-  if (session.listening) parts.push("listening");
-  if (session.firstPartialMs != null) {
-    parts.push(`first partial ${session.firstPartialMs} ms`);
+  if (banner) {
+    els.meta.textContent = banner;
+  } else {
+    const parts: string[] = [];
+    if (session.listening) parts.push("listening");
+    if (session.firstPartialMs != null) {
+      parts.push(`first partial ${session.firstPartialMs} ms`);
+    }
+    if (payload) parts.push(`${payload.appName} · ${payload.toneHint}`);
+    els.meta.textContent = parts.join(" · ");
   }
-  if (payload) parts.push(`${payload.appName} · ${payload.toneHint}`);
-  els.meta.textContent = parts.join(" · ");
   window.whisperFlow.resizeOverlay(els.root.scrollHeight + 24);
 }
 
@@ -47,18 +63,35 @@ function buildPasteText(): string {
   return (committed || pending).trim();
 }
 
-/** After commit, keep mic open briefly so Hear can flush remaining finals. */
-async function waitForFlush(maxMs = 1200): Promise<void> {
+function flushPcmQueue(): void {
+  if (!hearReady) return;
+  for (const frame of pcmQueue) {
+    window.whisperFlow.hearSendPcm(frame);
+  }
+  pcmQueue = [];
+}
+
+function enqueuePcm(buf: ArrayBuffer): void {
+  if (hearReady) {
+    window.whisperFlow.hearSendPcm(buf);
+    return;
+  }
+  if (pcmQueue.length >= PCM_QUEUE_MAX) pcmQueue.shift();
+  pcmQueue.push(buf);
+}
+
+/** After commit, keep listening briefly so Hear can flush remaining finals. */
+async function waitForFlush(maxMs = FLUSH_MAX_MS): Promise<void> {
   const start = performance.now();
   let lastLen = buildPasteText().length;
   let stableFor = 0;
   while (performance.now() - start < maxMs) {
-    await new Promise((r) => setTimeout(r, 120));
+    await new Promise((r) => setTimeout(r, FLUSH_POLL_MS));
     paint();
     const len = buildPasteText().length;
     if (len === lastLen && (!session.pending || session.pending.trim() === "")) {
-      stableFor += 120;
-      if (stableFor >= 240 && len > 0) break;
+      stableFor += FLUSH_POLL_MS;
+      if (stableFor >= FLUSH_STABLE_MS && len > 0) break;
     } else {
       stableFor = 0;
       lastLen = len;
@@ -72,26 +105,31 @@ async function startSession(p: PttStartPayload): Promise<void> {
   payload = p;
   session = createSession();
   markSpeechStart(session);
+  banner = "";
+  hearReady = false;
+  pcmQueue = [];
   paint();
 
   try {
-    hear = await acquireHear(p.apiKey, {
-      onPartial: (text) => {
-        onPartial(session, text);
-        paint();
-      },
-      onFinal: (text) => {
-        onFinal(session, text);
-        paint();
-      },
-      onError: (code) => {
-        els.meta.textContent = `error: ${code}`;
-      },
-    });
-    mic = await startMic((buf) => hear?.sendPcm16(buf));
+    const [hear] = await Promise.all([
+      window.whisperFlow.hearStart(),
+      startMic(enqueuePcm).then((handle) => {
+        mic = handle;
+      }),
+    ]);
+
+    if (!hear.ok) {
+      setBanner(`error: ${hear.error}`);
+      session.listening = false;
+      await stopCaptureOnly();
+      return;
+    }
+
+    hearReady = true;
+    flushPcmQueue();
+    paint();
   } catch (err) {
-    els.meta.textContent =
-      err instanceof Error ? err.message : "Failed to start capture";
+    setBanner(err instanceof Error ? err.message : "Failed to start capture");
     session.listening = false;
     paint();
   }
@@ -100,6 +138,7 @@ async function startSession(p: PttStartPayload): Promise<void> {
 async function stopCaptureOnly(): Promise<void> {
   mic?.stop();
   mic = null;
+  pcmQueue = [];
 }
 
 async function cancelSession(): Promise<void> {
@@ -113,8 +152,8 @@ async function cancelSession(): Promise<void> {
   try {
     await window.whisperFlow.endListen("cancel");
     await stopCaptureOnly();
-    parkHear(hear);
-    hear = null;
+    window.whisperFlow.hearPark();
+    hearReady = false;
   } finally {
     finishing = false;
   }
@@ -127,51 +166,75 @@ async function finishSession(): Promise<void> {
   await window.whisperFlow.endListen("commit");
 
   try {
-    hear?.commit();
-    els.meta.textContent = "finalizing…";
-    paint();
-    await waitForFlush(1200);
+    window.whisperFlow.hearCommit();
+    await waitForFlush(FLUSH_MAX_MS);
     await stopCaptureOnly();
 
     const raw = buildPasteText();
-
     if (!raw || !payload) {
-      els.meta.textContent = "nothing to paste";
-      paint();
+      setBanner("nothing to paste");
       window.whisperFlow.hideOverlay();
-      parkHear(hear);
-      hear = null;
+      window.whisperFlow.hearPark();
+      hearReady = false;
       return;
     }
 
-    els.meta.textContent = "polishing…";
-    paint();
+    setBanner("polishing…");
+    const timeoutMs = Math.min(
+      2000,
+      Math.max(100, payload.polishTimeoutMs ?? DEFAULT_POLISH_TIMEOUT_MS),
+    );
 
     const result = await window.whisperFlow.polishText({
       text: raw,
       tone: payload.toneHint,
       dictionary: payload.dictionary ?? [],
-      timeoutMs: payload.polishTimeoutMs ?? 400,
+      timeoutMs,
+      appName: payload.appName,
     });
 
     els.committed.textContent = result.text;
     els.pending.textContent = "";
-    els.meta.textContent = result.polished
-      ? `pasted · polished in ${Math.round(result.ms)} ms`
-      : `pasted · raw fallback (${Math.round(result.ms)} ms)`;
-    paint();
+    const tag = result.polished
+      ? `pasted · polished ${Math.round(result.ms)} ms`
+      : result.localOnly
+        ? `pasted · local cleanup (${Math.round(result.ms)} ms)`
+        : `pasted · fallback (${Math.round(result.ms)} ms)`;
+    setBanner(tag);
 
     await window.whisperFlow.pasteText(result.text);
-    parkHear(hear);
-    hear = null;
+
+    // Grow jargon dictionary from ProperCase / brands in the polished paste
+    if (result.text) {
+      void window.whisperFlow.learnDictionary([result.text]);
+    }
+
+    window.whisperFlow.hearPark();
+    hearReady = false;
   } catch {
-    hear?.close();
-    hear = null;
+    window.whisperFlow.hearPark();
+    hearReady = false;
   } finally {
     payload = null;
     finishing = false;
   }
 }
+
+window.whisperFlow.onHearPartial((text) => {
+  onPartial(session, text);
+  if (!banner.startsWith("error")) banner = "";
+  paint();
+});
+
+window.whisperFlow.onHearFinal((text) => {
+  onFinal(session, text);
+  if (!banner.startsWith("error")) banner = "";
+  paint();
+});
+
+window.whisperFlow.onHearError((code, message) => {
+  setBanner(`error: ${code}${message ? ` · ${message.slice(0, 80)}` : ""}`);
+});
 
 window.whisperFlow.onPttStart((p) => {
   void startSession(p);

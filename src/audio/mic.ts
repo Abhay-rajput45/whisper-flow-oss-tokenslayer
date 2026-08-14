@@ -4,8 +4,8 @@ export type MicHandle = {
 
 /**
  * Capture mic → AudioWorklet → PCM16 @ 16 kHz frames via onFrame.
- * Uses browser DSP (noiseSuppression / echoCancellation / AGC) plus a
- * worklet high-pass + soft noise gate to cut room hiss / desk rumble.
+ * PyAI Hear has no denoise query param; we use browser NS/AEC/AGC plus a
+ * worklet energy gate (hysteresis + hangover) to cut room hiss.
  */
 export async function startMic(
   onFrame: (pcm16: ArrayBuffer) => void,
@@ -16,7 +16,6 @@ export async function startMic(
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
-      // Chrome/Electron-only extras (safely ignored elsewhere)
       ...({
         googEchoCancellation: true,
         googNoiseSuppression: true,
@@ -36,18 +35,12 @@ export async function startMic(
   }
 
   const source = ctx.createMediaStreamSource(stream);
-  // Cut low rumble before the worklet (AC is cheap + effective)
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
   highpass.frequency.value = 100;
   highpass.Q.value = 0.707;
 
-  const node = new AudioWorkletNode(ctx, "capture-processor", {
-    processorOptions: {
-      // Soft gate: below this RMS, send silence (still advances Hear endpointing)
-      gateRms: 0.012,
-    },
-  });
+  const node = new AudioWorkletNode(ctx, "capture-processor");
   node.port.onmessage = (e) => {
     onFrame(e.data as ArrayBuffer);
   };

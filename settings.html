@@ -47,7 +47,10 @@
 
       <section class="card">
         <h2>Dictionary</h2>
-        <p class="hint">Names and jargon the polish step should prefer.</p>
+        <p class="hint">
+          Defaults on first run: <code>PyAI</code>, <code>JustCall</code>, <code>SaaS Labs</code>, <code>WhisperFlow</code>, <code>Hear</code>, <code>NFuse</code>, <code>Omni</code>.
+          Local cleanup also maps common mis-hearings (e.g. “pie ai” → PyAI). Proper nouns in polished pastes are learned automatically — review and remove noise below.
+        </p>
         <div class="row">
           <input id="dictInput" type="text" maxlength="64" placeholder="Add a term…" />
           <button id="dictAdd" type="button">Add</button>

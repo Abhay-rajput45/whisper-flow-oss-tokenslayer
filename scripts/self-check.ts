@@ -90,5 +90,51 @@ assert.equal(toneForBundleId("com.apple.mail", "Mail"), "formal");
 assert.equal(toneForBundleId("com.apple.Safari", "Safari"), "neutral");
 assert.equal(toneForBundleId("com.google.Chrome", "Google Chrome"), "neutral");
 assert.equal(toneForBundleId("com.github.Electron", "Electron"), "neutral");
+assert.equal(toneForBundleId("com.microsoft.VSCode", "Code"), "neutral");
+
+// --- dictation clean ---
+function preCleanDictation(text: string): string {
+  let out = String(text ?? "").trim();
+  out = out.replace(
+    /\b(?:um+|uh+|erm+|ah+|eh+|hmm+|huh+|like|you know|i mean|sort of|kind of|basically|literally)\b/gi,
+    " ",
+  );
+  out = out.replace(/\s+([,.;:!?])/g, "$1");
+  out = out.replace(/\b(\w{2,})\s+\1\b/gi, "$1");
+  out = out.replace(/\s+/g, " ").trim();
+  return out;
+}
+
+function applyDictionary(text: string, dictionary: string[]): string {
+  let out = text;
+  const sorted = [...dictionary].sort((a, b) => b.length - a.length);
+  for (const term of sorted) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`\\b${escaped}\\b`, "gi"), term);
+  }
+  return out;
+}
+
+assert.equal(preCleanDictation("um hello uh there"), "hello there");
+assert.equal(
+  applyDictionary("pyai and justcall rocks", ["PyAI", "JustCall"]),
+  "PyAI and JustCall rocks",
+);
+
+function applyMishears(text: string): string {
+  const pairs = [
+    { alias: "pie ai", prefer: "PyAI" },
+    { alias: "just call", prefer: "JustCall" },
+    { alias: "sass labs", prefer: "SaaS Labs" },
+  ];
+  let out = text;
+  for (const { alias, prefer } of pairs) {
+    out = out.replace(new RegExp(`\\b${alias}\\b`, "gi"), prefer);
+  }
+  return out;
+}
+
+assert.equal(applyMishears("ship on pie ai for just call"), "ship on PyAI for JustCall");
+assert.equal(applyMishears("sass labs demo"), "SaaS Labs demo");
 
 console.log("self-check ok");

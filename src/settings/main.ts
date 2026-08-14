@@ -49,7 +49,7 @@ async function load(): Promise<void> {
     apiKeyMasked: string;
   };
   hotkeyEl.value = s.hotkey || "Alt+Space";
-  polishEl.value = String(s.polishTimeoutMs ?? 400);
+  polishEl.value = String(s.polishTimeoutMs ?? 700);
   dictionary = Array.isArray(s.dictionary) ? [...s.dictionary] : [];
   renderDict();
   keyStatus.textContent = s.apiKeySet
@@ -86,7 +86,7 @@ document.getElementById("save")!.addEventListener("click", async () => {
     const patch: Record<string, unknown> = {
       hotkey: hotkeyEl.value.trim() || "Alt+Space",
       dictionary,
-      polishTimeoutMs: Number(polishEl.value) || 400,
+      polishTimeoutMs: Number(polishEl.value) || 700,
     };
     if (apiKeyDirty && apiKeyEl.value.trim()) {
       patch.apiKey = apiKeyEl.value.trim();

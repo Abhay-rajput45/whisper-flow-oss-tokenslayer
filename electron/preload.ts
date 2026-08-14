@@ -7,7 +7,6 @@ export type FrontmostInfo = {
 };
 
 export type PttStartPayload = {
-  apiKey: string;
   toneHint: "casual" | "formal" | "neutral";
   bundleId: string;
   appName: string;
@@ -20,12 +19,15 @@ export type PolishRequest = {
   tone: "casual" | "formal" | "neutral";
   dictionary: string[];
   timeoutMs: number;
+  appName?: string;
 };
 
 export type PolishResult = {
   text: string;
   polished: boolean;
+  localOnly: boolean;
   ms: number;
+  status: "shipped" | "partial" | "failed";
 };
 
 const api = {
@@ -40,6 +42,37 @@ const api = {
   endListen: (action: "cancel" | "commit") =>
     ipcRenderer.invoke("end-listen", action),
   checkPermissions: () => ipcRenderer.invoke("check-permissions"),
+  learnDictionary: (terms: string[]) =>
+    ipcRenderer.invoke("learn-dictionary", terms),
+
+  hearStart: (): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("hear-start"),
+  hearSendPcm: (buf: ArrayBuffer) => {
+    ipcRenderer.send("hear-pcm", buf);
+  },
+  hearCommit: () => ipcRenderer.send("hear-commit"),
+  hearPark: () => ipcRenderer.send("hear-park"),
+
+  onHearPartial: (cb: (text: string) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, text: string) => cb(text);
+    ipcRenderer.on("hear-partial", listener);
+    return () => ipcRenderer.removeListener("hear-partial", listener);
+  },
+  onHearFinal: (cb: (text: string) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, text: string) => cb(text);
+    ipcRenderer.on("hear-final", listener);
+    return () => ipcRenderer.removeListener("hear-final", listener);
+  },
+  onHearError: (cb: (code: string, message: string) => void) => {
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      code: string,
+      message: string,
+    ) => cb(code, message);
+    ipcRenderer.on("hear-error", listener);
+    return () => ipcRenderer.removeListener("hear-error", listener);
+  },
+
   onPttStart: (cb: (payload: PttStartPayload) => void) => {
     const listener = (_: Electron.IpcRendererEvent, payload: PttStartPayload) =>
       cb(payload);
