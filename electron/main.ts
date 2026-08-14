@@ -14,7 +14,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { pasteViaAccessibility } from "./paste";
+import { activateApp, pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
 import { loadSettings, saveSettings, type AppSettings, DEFAULTS } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
@@ -91,7 +91,8 @@ function createOverlayWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
-    focusable: false,
+    focusable: true,
+    acceptFirstMouse: true,
     hasShadow: false,
     type: "panel",
     webPreferences: {
@@ -195,15 +196,19 @@ function showOverlay(): void {
   }
 }
 
+function hideOverlayNow(): void {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  try {
+    overlayWin.hide();
+  } catch {
+    /* ignore */
+  }
+}
+
 function hideOverlaySoon(ms = 800): void {
   setTimeout(() => {
     if (pttHeld) return;
-    if (!overlayWin || overlayWin.isDestroyed()) return;
-    try {
-      if (overlayWin.isVisible()) overlayWin.hide();
-    } catch {
-      /* ignore */
-    }
+    hideOverlayNow();
   }, ms);
 }
 
@@ -243,16 +248,28 @@ function createTray(): void {
   });
 }
 
+function looksLikeAccelerator(raw: string): boolean {
+  const parts = raw.split("+").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return false;
+  return parts.every((p) => /^[A-Za-z0-9]+$/.test(p) || p.length === 1);
+}
+
 function registerHotkey(): boolean {
   const accelerator = settings.hotkey?.trim() || DEFAULTS.hotkey;
+  if (!looksLikeAccelerator(accelerator)) return false;
   globalShortcut.unregisterAll();
-  const ok = globalShortcut.register(accelerator, () => {
-    void togglePtt();
-  });
-  if (!ok) {
-    console.error("Failed to register hotkey:", accelerator);
+  try {
+    const ok = globalShortcut.register(accelerator, () => {
+      void togglePtt();
+    });
+    if (!ok) {
+      console.error("Failed to register hotkey:", accelerator);
+    }
+    return ok;
+  } catch {
+    console.error("Invalid hotkey:", accelerator);
+    return false;
   }
-  return ok;
 }
 
 /** Tap to start / tap to finish (Electron globalShortcut has no keyup). */
@@ -334,7 +351,9 @@ function wireIpc(): void {
         .slice(0, 200)
         .map((d) => d.slice(0, 64));
     }
-    if (patch.hotkey) patch.hotkey = String(patch.hotkey).slice(0, 64);
+    if (patch.hotkey !== undefined) {
+      patch.hotkey = String(patch.hotkey).trim().slice(0, 64);
+    }
     if (patch.polishTimeoutMs !== undefined) {
       const n = Number(patch.polishTimeoutMs);
       patch.polishTimeoutMs = Number.isFinite(n)
@@ -342,15 +361,19 @@ function wireIpc(): void {
         : 400;
     }
     const prevHotkey = settings.hotkey;
+    const requestedHotkey = patch.hotkey;
     settings = saveSettings({ ...settings, ...patch });
     const hotkeyRegistered = registerHotkey();
-    if (!hotkeyRegistered && prevHotkey && prevHotkey !== settings.hotkey) {
+    if (!hotkeyRegistered && requestedHotkey && requestedHotkey !== prevHotkey) {
       settings = saveSettings({ ...settings, hotkey: prevHotkey });
       registerHotkey();
+      const invalid = !looksLikeAccelerator(String(requestedHotkey));
       return {
         ok: false,
         hotkeyRegistered: false,
-        error: `Could not bind ${patch.hotkey}. Kept ${prevHotkey}.`,
+        error: invalid
+          ? `Invalid hotkey “${requestedHotkey}”. Use Alt+Space, Command+Shift+Space, or F6.`
+          : `Could not bind “${requestedHotkey}” (in use or reserved). Kept ${prevHotkey}.`,
         hotkey: prevHotkey,
         polishTimeoutMs: settings.polishTimeoutMs,
       };
@@ -383,9 +406,7 @@ function wireIpc(): void {
     if (!plain) return { ok: false, reason: "empty" };
 
     // Hide overlay first so Cmd+V lands in the user's editor
-    if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
-      overlayWin.hide();
-    }
+    hideOverlayNow();
 
     clipboard.writeText(plain);
     const pasted = await pasteViaAccessibility({
@@ -397,7 +418,17 @@ function wireIpc(): void {
   });
 
   ipcMain.handle("hide-overlay", () => {
-    hideOverlaySoon(0);
+    pttHeld = false;
+    hideOverlayNow();
+  });
+
+  ipcMain.handle("end-listen", async (_e, action: unknown) => {
+    pttHeld = false;
+    hideOverlayNow();
+    if (action === "cancel") {
+      await activateApp(targetAppName);
+    }
+    return { ok: true };
   });
 
   ipcMain.handle("check-permissions", async () => {
@@ -408,7 +439,7 @@ function wireIpc(): void {
   });
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
-    if (!overlayWin || overlayWin.isDestroyed()) return;
+    if (!overlayWin || overlayWin.isDestroyed() || !overlayWin.isVisible()) return;
     try {
       const h = Math.min(280, Math.max(80, Math.round(height)));
       overlayWin.setSize(720, h);

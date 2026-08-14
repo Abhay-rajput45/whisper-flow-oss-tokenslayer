@@ -145,6 +145,11 @@ button.primary {
   min-height: 1.2em;
 }
 
+.toast.error {
+  color: #b42318;
+  font-weight: 600;
+}
+
 .perm {
   margin: 10px 0 0;
   padding: 10px;
