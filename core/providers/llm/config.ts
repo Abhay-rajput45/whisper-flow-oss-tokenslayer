@@ -51,17 +51,29 @@ export function resolveEndpointUrl(env: EnvLike): string {
   return readTrimmed(env, "TEXT_LLM_URL").replace(/\/+$/, "");
 }
 
+/** User-supplied values (from Settings). Blank/absent falls through to env. */
+export type LlmOverrides = {
+  url?: string;
+  model?: string;
+  apiKey?: string;
+};
+
+/** Settings wins when non-blank; env is the default. */
+function pick(override: string | undefined, envValue: string): string {
+  return String(override ?? "").trim() || envValue;
+}
+
 export function resolveLlmEndpoint(opts: {
-  /** Key already resolved by the host (Settings → PYAI_API_KEY). */
-  apiKey: string;
+  /** Settings values; these WIN over env when non-blank. */
+  overrides?: LlmOverrides;
   timeoutMs: number;
   env: EnvLike;
 }): LlmEndpointConfig {
-  const { env } = opts;
+  const { env, overrides } = opts;
   return {
-    url: resolveEndpointUrl(env),
-    model: readTrimmed(env, "TEXT_LLM_MODEL"),
-    apiKey: readTrimmed(env, "TEXT_LLM_API_KEY") || opts.apiKey,
+    url: pick(overrides?.url, resolveEndpointUrl(env)).replace(/\/+$/, ""),
+    model: pick(overrides?.model, readTrimmed(env, "TEXT_LLM_MODEL")),
+    apiKey: pick(overrides?.apiKey, readTrimmed(env, "TEXT_LLM_API_KEY")),
     temperature: readNumber(env, "TEXT_LLM_TEMPERATURE"),
     maxTokens: readNumber(env, "TEXT_LLM_MAX_TOKENS"),
     stream: readBoolean(env, "TEXT_LLM_STREAM"),
@@ -70,11 +82,11 @@ export function resolveLlmEndpoint(opts: {
   };
 }
 
-/** Names of the settings that are missing; empty array = good to call. */
+/** Human-readable names of what's missing; empty array = good to call. */
 export function missingEndpointFields(cfg: LlmEndpointConfig): string[] {
   const missing: string[] = [];
-  if (!cfg.url) missing.push("TEXT_LLM_URL");
-  if (!cfg.model) missing.push("TEXT_LLM_MODEL");
-  if (!cfg.apiKey) missing.push("TEXT_LLM_API_KEY");
+  if (!cfg.url) missing.push("Polish API URL (or TEXT_LLM_URL)");
+  if (!cfg.model) missing.push("Polish API model (or TEXT_LLM_MODEL)");
+  if (!cfg.apiKey) missing.push("Polish API key (or TEXT_LLM_API_KEY)");
   return missing;
 }

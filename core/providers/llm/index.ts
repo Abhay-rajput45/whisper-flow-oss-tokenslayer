@@ -11,6 +11,7 @@ export {
   resolveEndpointUrl,
   resolveLlmEndpoint,
 } from "./config";
+export type { LlmOverrides } from "./config";
 export { buildBody, complete } from "./openai";
 export { withTimeout } from "./transport/http";
 export type {

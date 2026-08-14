@@ -15,6 +15,7 @@ import {
   missingEndpointFields,
   resolveLlmEndpoint,
   withTimeout,
+  type LlmOverrides,
 } from "../core/providers/llm";
 import { getLogger } from "../core/logging/logger";
 import {
@@ -34,29 +35,24 @@ const MAX_POLISH_TIMEOUT_MS = 4000;
 const MIN_POLISH_TIMEOUT_MS = 100;
 const MAX_INPUT_CHARS = 8000;
 
-/** Shown in Settings — reflects TEXT_LLM_MODEL, or "not configured". */
-export function polishModel(): string {
+/** Settings overrides; blank falls through to the TEXT_LLM_* env values. */
+export type PolishOverrides = LlmOverrides;
+
+/** Shown in Settings — the model that will actually be used. */
+export function effectivePolishModel(overrides?: PolishOverrides): string {
   return (
-    resolveLlmEndpoint({ apiKey: "", timeoutMs: 0, env: process.env }).model ||
+    resolveLlmEndpoint({ overrides, timeoutMs: 0, env: process.env }).model ||
     "not configured"
   );
 }
 
-/**
- * Config summary for startup diagnostics.
- * `fallbackKey` is the Settings/GEMINI_API_KEY value, used only when
- * TEXT_LLM_API_KEY is unset — so callers must not test that key directly.
- */
-export function polishStatus(fallbackKey = ""): {
+/** Config summary for startup diagnostics. */
+export function polishStatus(overrides?: PolishOverrides): {
   model: string;
   ready: boolean;
   missing: string[];
 } {
-  const cfg = resolveLlmEndpoint({
-    apiKey: fallbackKey,
-    timeoutMs: 0,
-    env: process.env,
-  });
+  const cfg = resolveLlmEndpoint({ overrides, timeoutMs: 0, env: process.env });
   const missing = missingEndpointFields(cfg);
   return {
     model: cfg.model || "not configured",
@@ -75,9 +71,12 @@ const TONE_INSTRUCTIONS: Record<Tone, string> = {
 };
 
 export type PolishInput = {
-  /** Polish-provider key (Gemini by default) — NOT the PyAI/Hear key. */
   text: string;
-  apiKey: string;
+  /**
+   * Polish-provider overrides from Settings — NOT the PyAI/Hear key.
+   * Blank/absent falls through to TEXT_LLM_* env values.
+   */
+  overrides?: PolishOverrides;
   tone: Tone;
   dictionary: string[];
   timeoutMs: number;
@@ -140,8 +139,8 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
   // Measured Gemini Flash-Lite latency ~780–1400ms; leave p99 room.
   const timeoutMs = clampTimeout(input.timeoutMs || DEFAULT_POLISH_TIMEOUT_MS);
   const cfg = resolveLlmEndpoint({
-    // Settings/GEMINI_API_KEY is the fallback; TEXT_LLM_API_KEY wins.
-    apiKey: String(input.apiKey ?? "").trim(),
+    // Settings values win; TEXT_LLM_* env is the default.
+    overrides: input.overrides,
     timeoutMs,
     env: process.env,
   });

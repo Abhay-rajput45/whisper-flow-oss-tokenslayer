@@ -11,8 +11,14 @@ import {
 export type AppSettings = {
   /** PyAI key — streaming STT (Hear) only. */
   apiKey: string;
-  /** Gemini key — polish only. Separate so one bad key can't break both legs. */
-  geminiApiKey: string;
+  /**
+   * Polish provider overrides. Blank means "use the TEXT_LLM_* env value";
+   * anything set here wins. Kept separate from the PyAI key so one bad
+   * credential can't break both legs.
+   */
+  polishUrl: string;
+  polishApiKey: string;
+  polishModel: string;
   hotkey: string;
   /** User-added terms only (built-in defaults live in code, not here). */
   dictionary: string[];
@@ -21,7 +27,9 @@ export type AppSettings = {
 
 export const DEFAULTS: AppSettings = {
   apiKey: "",
-  geminiApiKey: "",
+  polishUrl: "",
+  polishApiKey: "",
+  polishModel: "",
   hotkey: "Alt+Space",
   dictionary: [],
   polishTimeoutMs: 2000,
@@ -94,7 +102,9 @@ export function saveSettings(next: AppSettings): AppSettings {
   ensureDir(file);
   const toWrite: AppSettings = {
     apiKey: String(next.apiKey ?? "").slice(0, 512),
-    geminiApiKey: String(next.geminiApiKey ?? "").slice(0, 512),
+    polishUrl: String(next.polishUrl ?? "").trim().slice(0, 512),
+    polishApiKey: String(next.polishApiKey ?? "").trim().slice(0, 512),
+    polishModel: String(next.polishModel ?? "").trim().slice(0, 128),
     hotkey: String(next.hotkey ?? DEFAULTS.hotkey).slice(0, 64),
     dictionary: userDictionaryOnly(next.dictionary),
     polishTimeoutMs: clampPolishTimeout(next.polishTimeoutMs),
