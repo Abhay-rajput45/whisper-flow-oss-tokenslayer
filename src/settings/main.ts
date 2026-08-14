@@ -98,8 +98,35 @@ document.getElementById("save")!.addEventListener("click", async () => {
 });
 
 document.getElementById("checkPerms")!.addEventListener("click", async () => {
-  const perms = await window.whisperFlow.checkPermissions();
-  permOut.textContent = JSON.stringify(perms, null, 2);
+  const perms = (await window.whisperFlow.checkPermissions()) as {
+    accessibility: boolean;
+    microphone: string;
+    opened?: string[];
+  };
+  const lines = [
+    `Microphone: ${perms.microphone}`,
+    `Accessibility: ${perms.accessibility ? "granted" : "not granted"}`,
+  ];
+  if (perms.opened?.length) {
+    lines.push(
+      `Opened System Settings → Privacy & Security (${perms.opened.join(", ")}). Turn on WhisperFlow / Electron, then click Check again.`,
+    );
+    if (perms.opened.length === 1 && (!perms.accessibility || perms.microphone !== "granted")) {
+      const still = [];
+      if (!perms.accessibility && !perms.opened.includes("accessibility")) {
+        still.push("Accessibility");
+      }
+      if (perms.microphone !== "granted" && !perms.opened.includes("microphone")) {
+        still.push("Microphone");
+      }
+      if (still.length) {
+        lines.push(`Still needed after that: ${still.join(", ")}.`);
+      }
+    }
+  } else if (perms.accessibility && perms.microphone === "granted") {
+    lines.push("Both permissions are granted.");
+  }
+  permOut.textContent = lines.join("\n");
 });
 
 document.getElementById("refreshTone")!.addEventListener("click", async () => {

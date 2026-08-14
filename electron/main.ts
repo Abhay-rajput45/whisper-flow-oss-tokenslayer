@@ -8,7 +8,6 @@ import {
   Menu,
   nativeImage,
   shell,
-  systemPreferences,
   screen,
   type NativeImage,
 } from "electron";
@@ -19,7 +18,7 @@ import dotenv from "dotenv";
 import { pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
 import { loadSettings, saveSettings, type AppSettings } from "./settings-store";
-import { checkAccessibility } from "./permissions";
+import { checkAccessibility, ensurePermissions } from "./permissions";
 import { polishText, type PolishInput } from "./polish";
 import type { Tone } from "./tones";
 
@@ -393,19 +392,7 @@ function wireIpc(): void {
     hideOverlaySoon(0);
   });
 
-  ipcMain.handle("check-permissions", async () => {
-    const accessibility = checkAccessibility(false);
-    let microphone = "unknown";
-    if (process.platform === "darwin") {
-      const status = systemPreferences.getMediaAccessStatus("microphone");
-      microphone = status;
-      if (status !== "granted") {
-        await systemPreferences.askForMediaAccess("microphone");
-        microphone = systemPreferences.getMediaAccessStatus("microphone");
-      }
-    }
-    return { accessibility, microphone };
-  });
+  ipcMain.handle("check-permissions", async () => ensurePermissions());
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
     if (!overlayWin || overlayWin.isDestroyed()) return;
