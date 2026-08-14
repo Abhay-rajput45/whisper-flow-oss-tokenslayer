@@ -16,10 +16,29 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { activateApp, pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
-import { loadSettings, saveSettings, type AppSettings, DEFAULTS } from "./settings-store";
+import {
+  loadSettings,
+  saveSettings,
+  learnIntoSettings,
+  type AppSettings,
+  DEFAULTS,
+} from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
 import { polishText, polishModel, type PolishInput } from "./polish";
+import {
+  extractLearnableTerms,
+  effectiveDictionary,
+  userDictionaryOnly,
+} from "./dictation-clean";
 import type { Tone } from "./tones";
+import {
+  setHearTarget,
+  startHear,
+  sendHearPcm,
+  commitHear,
+  parkHear,
+  closeHear,
+} from "./hear-session";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +54,23 @@ let pttHeld = false;
 let settings: AppSettings = { ...DEFAULTS };
 /** Frontmost app at PTT start — used to restore focus before paste */
 let targetAppName = "";
+let lastPttAt = 0;
+const PTT_DEBOUNCE_MS = 180;
+
+function sanitizeEnvKey(raw: string | undefined): string {
+  return String(raw ?? "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "");
+}
+
+/** Prefer .env for local hackathon runs; Settings fills the gap. Never log the key. */
+function resolveApiKeyInfo(): { key: string; source: "env" | "settings" | "none" } {
+  const fromEnv = sanitizeEnvKey(process.env.PYAI_API_KEY);
+  if (fromEnv) return { key: fromEnv, source: "env" };
+  const fromSettings = settings.apiKey?.trim() ?? "";
+  if (fromSettings) return { key: fromSettings, source: "settings" };
+  return { key: "", source: "none" };
+}
 
 /** PyAI key — streaming STT (Hear) only. */
 function resolveApiKey(): string {
@@ -139,6 +175,7 @@ function ensureOverlay(): BrowserWindow {
   if (!overlayWin || overlayWin.isDestroyed()) {
     overlayWin = createOverlayWindow();
   }
+  setHearTarget(overlayWin);
   return overlayWin;
 }
 
@@ -257,7 +294,10 @@ function createTray(): void {
 }
 
 function looksLikeAccelerator(raw: string): boolean {
-  const parts = raw.split("+").map((p) => p.trim()).filter(Boolean);
+  const parts = raw
+    .split("+")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (parts.length === 0) return false;
   return parts.every((p) => /^[A-Za-z0-9]+$/.test(p) || p.length === 1);
 }
@@ -282,9 +322,13 @@ function registerHotkey(): boolean {
 
 /** Tap to start / tap to finish (Electron globalShortcut has no keyup). */
 async function togglePtt(): Promise<void> {
+  const now = Date.now();
+  if (now - lastPttAt < PTT_DEBOUNCE_MS) return;
+  lastPttAt = now;
+
   try {
     if (!pttHeld) {
-      const key = resolveApiKey();
+      const { key, source } = resolveApiKeyInfo();
       if (!key) {
         settingsWin ??= createSettingsWindow();
         if (!settingsWin.isDestroyed()) {
@@ -297,18 +341,29 @@ async function togglePtt(): Promise<void> {
         }
         return;
       }
+      console.log(`Hear auth source: ${source}, length ${key.length}`);
       pttHeld = true;
       const front = await getFrontmostApp();
       targetAppName = front.name;
       const win = ensureOverlay();
+      setHearTarget(win);
       showOverlay();
+
+      // Wait for overlay load so ptt-start is not dropped
+      if (!win.isDestroyed() && win.webContents.isLoading()) {
+        await new Promise<void>((resolve) => {
+          win.webContents.once("did-finish-load", () => resolve());
+          setTimeout(resolve, 1500);
+        });
+      }
+
       if (!win.isDestroyed()) {
+        // Never send the API key into the renderer — Hear runs in main.
         win.webContents.send("ptt-start", {
-          apiKey: key,
           toneHint: front.tone,
           bundleId: front.bundleId,
           appName: front.name,
-          dictionary: settings.dictionary,
+          dictionary: effectiveDictionary(settings.dictionary),
           polishTimeoutMs: settings.polishTimeoutMs,
         });
       }
@@ -332,12 +387,13 @@ function wireIpc(): void {
   ipcMain.handle("get-settings", () => {
     // Never return raw keys to the renderer — only "is it set" + a masked hint.
     const { apiKey, geminiApiKey, ...rest } = settings;
+    const envKey = sanitizeEnvKey(process.env.PYAI_API_KEY);
     return {
       ...rest,
-      apiKeySet: Boolean(apiKey || process.env.PYAI_API_KEY),
+      apiKeySet: Boolean(apiKey || envKey),
       apiKeyMasked: apiKey
         ? `${apiKey.slice(0, 8)}…`
-        : process.env.PYAI_API_KEY
+        : envKey
           ? "(from env)"
           : "",
       geminiKeySet: Boolean(geminiApiKey || process.env.GEMINI_API_KEY),
@@ -371,11 +427,7 @@ function wireIpc(): void {
       }
     }
     if (patch.dictionary) {
-      patch.dictionary = patch.dictionary
-        .map((d) => String(d).trim())
-        .filter(Boolean)
-        .slice(0, 200)
-        .map((d) => d.slice(0, 64));
+      patch.dictionary = userDictionaryOnly(patch.dictionary);
     }
     if (patch.hotkey !== undefined) {
       patch.hotkey = String(patch.hotkey).trim().slice(0, 64);
@@ -390,7 +442,11 @@ function wireIpc(): void {
     const requestedHotkey = patch.hotkey;
     settings = saveSettings({ ...settings, ...patch });
     const hotkeyRegistered = registerHotkey();
-    if (!hotkeyRegistered && requestedHotkey && requestedHotkey !== prevHotkey) {
+    if (
+      !hotkeyRegistered &&
+      requestedHotkey &&
+      requestedHotkey !== prevHotkey
+    ) {
       settings = saveSettings({ ...settings, hotkey: prevHotkey });
       registerHotkey();
       const invalid = !looksLikeAccelerator(String(requestedHotkey));
@@ -414,40 +470,74 @@ function wireIpc(): void {
 
   ipcMain.handle("get-frontmost", async () => getFrontmostApp());
 
+  ipcMain.handle("learn-dictionary", (_e, blobs: unknown) => {
+    const texts = Array.isArray(blobs)
+      ? blobs.map((b) => String(b ?? "")).filter(Boolean)
+      : [];
+    const additions: string[] = [];
+    const known = effectiveDictionary(settings.dictionary);
+    for (const text of texts) {
+      additions.push(...extractLearnableTerms(text, known));
+    }
+    if (additions.length === 0) return { ok: true, added: 0 };
+    settings = learnIntoSettings(additions);
+    return { ok: true, added: additions.length };
+  });
+
   ipcMain.handle("polish-text", async (_e, input: PolishInput) => {
     const key = resolvePolishKey();
-    const budget =
-      typeof input?.timeoutMs === "number" ? input.timeoutMs : 2000;
+    const timeoutMs =
+      typeof input?.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
+        ? input.timeoutMs
+        : settings.polishTimeoutMs;
+    const dictionary = effectiveDictionary(
+      Array.isArray(input?.dictionary) && input.dictionary.length > 0
+        ? input.dictionary
+        : settings.dictionary,
+    );
     const result = await polishText({
       text: String(input?.text ?? ""),
       apiKey: key,
       tone: (input?.tone as Tone) || "neutral",
-      dictionary: Array.isArray(input?.dictionary)
-        ? input.dictionary.map(String).slice(0, 200)
-        : [],
-      timeoutMs: settings.polishTimeoutMs,
+      dictionary,
+      timeoutMs,
+      appName: String(input?.appName ?? "").slice(0, 64),
     });
-    // "Polish looks like it didn't run" is indistinguishable from "it ran fast"
-    // without this. Dev only — never log polished text in a packaged build.
+    // Dev only — never log polished text in a packaged build.
     if (isDev) {
       const why = !key
-        ? "NO KEY"
+        ? "NO KEY (local cleanup only)"
         : result.polished
           ? "polished"
-          : `fell back (budget ${budget}ms)`;
+          : `fell back to local cleanup (budget ${timeoutMs}ms)`;
       console.log(`[polish] ${why} in ${result.ms}ms via ${polishModel()}`);
-      if (!result.polished && key) {
-        console.log(`[polish] raw kept: ${JSON.stringify(result.text.slice(0, 120))}`);
-      }
     }
     return result;
+  });
+
+  ipcMain.handle("hear-start", async () => {
+    const key = resolveApiKey();
+    if (!key) return { ok: false as const, error: "Missing PYAI_API_KEY" };
+    setHearTarget(overlayWin);
+    return startHear(key);
+  });
+
+  ipcMain.on("hear-pcm", (_e, buf: unknown) => {
+    sendHearPcm(buf);
+  });
+
+  ipcMain.on("hear-commit", () => {
+    commitHear();
+  });
+
+  ipcMain.on("hear-park", () => {
+    parkHear();
   });
 
   ipcMain.handle("paste-text", async (_e, text: string) => {
     const plain = String(text ?? "").slice(0, 50_000);
     if (!plain) return { ok: false, reason: "empty" };
 
-    // Hide overlay first so Cmd+V lands in the user's editor
     hideOverlayNow();
 
     clipboard.writeText(plain);
@@ -481,7 +571,8 @@ function wireIpc(): void {
   });
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
-    if (!overlayWin || overlayWin.isDestroyed() || !overlayWin.isVisible()) return;
+    if (!overlayWin || overlayWin.isDestroyed() || !overlayWin.isVisible())
+      return;
     try {
       const h = Math.min(280, Math.max(80, Math.round(height)));
       overlayWin.setSize(720, h);
@@ -504,6 +595,7 @@ app.whenReady().then(() => {
   settings = loadSettings();
 
   overlayWin = createOverlayWindow();
+  setHearTarget(overlayWin);
   settingsWin = createSettingsWindow();
   createTray();
   wireIpc();
@@ -523,6 +615,7 @@ app.whenReady().then(() => {
 
 app.on("will-quit", () => {
   quitting = true;
+  closeHear();
   globalShortcut.unregisterAll();
 });
 

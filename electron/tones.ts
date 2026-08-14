@@ -22,6 +22,20 @@ const FORMAL_BUNDLES = new Set([
   "com.apple.iwork.pages",
   "md.obsidian",
   "notion.id",
+  "com.salesforce.lightning",
+  "com.salesforce.chatterdesktop",
+  "com.hubspot.hubspot",
+  "com.linear",
+  "com.atlassian.jira",
+  "com.tinyspeck.trello",
+]);
+
+const CODE_BUNDLES = new Set([
+  "com.microsoft.vscode",
+  "com.todesktop.230313mzl4w4u92",
+  "com.jetbrains.intellij",
+  "com.apple.dt.xcode",
+  "com.github.githubclient",
 ]);
 
 const BROWSER_BUNDLES = new Set([
@@ -59,9 +73,18 @@ export function toneForBundleId(bundleId: string, appName = ""): Tone {
     return "casual";
   }
 
-  const looksFormalName = /mail|outlook|gmail|word|pages|notion|docs|document/.test(
-    name,
-  );
+  // IDEs / terminals stay neutral (code-friendly punctuation)
+  if (
+    CODE_BUNDLES.has(id) ||
+    /code|cursor|terminal|iterm|warp|jetbrains|xcode|github/.test(name)
+  ) {
+    return "neutral";
+  }
+
+  const looksFormalName =
+    /mail|outlook|gmail|word|pages|notion|docs|document|salesforce|hubspot|linear|jira|confluence|zendesk/.test(
+      name,
+    );
   if (FORMAL_BUNDLES.has(id) || looksFormalName) {
     if (
       (BROWSER_BUNDLES.has(id) || /chrome|safari|firefox|edge|arc|brave/.test(name)) &&
