@@ -462,8 +462,8 @@ function wireIpc(): void {
         : envKey
           ? "(from env)"
           : "",
+      // Only whether a key exists — the renderer shows a mask, never the value.
       polishKeySet: Boolean(polishApiKey),
-      polishKeyMasked: polishApiKey ? `${polishApiKey.slice(0, 8)}…` : "",
       effectivePolishModel: effectivePolishModel(polishOverrides()),
     };
   });
@@ -482,7 +482,8 @@ function wireIpc(): void {
     // Only guard against writing a masked placeholder over a real key.
     if (patch.polishApiKey !== undefined) {
       const k = String(patch.polishApiKey).trim();
-      if (k.includes("…") || k === "(from env)") {
+      // Never write a mask back over the real key; blank is a genuine clear.
+      if (k.includes("…") || /^[•*]+$/.test(k) || k === "(from env)") {
         delete patch.polishApiKey;
       } else {
         patch.polishApiKey = k;

@@ -9,17 +9,19 @@ const polishEl = document.getElementById("polishTimeout") as HTMLInputElement;
 const dictInput = document.getElementById("dictInput") as HTMLInputElement;
 const dictList = document.getElementById("dictList") as HTMLUListElement;
 const keyStatus = document.getElementById("keyStatus")!;
-const polishKeyStatus = document.getElementById("polishKeyStatus")!;
 const polishModelEl = document.getElementById("polishModelEffective")!;
+
+/**
+ * Stands in for a saved polish key so the raw value never reaches the renderer.
+ * Left untouched → keep the stored key. Cleared → fall back to .env.
+ */
+const SAVED_KEY_MASK = "••••••••••••";
 const toast = document.getElementById("toast")!;
 const permOut = document.getElementById("permOut")!;
 const toneOut = document.getElementById("toneOut")!;
 
 let dictionary: string[] = [];
 let apiKeyDirty = false;
-let polishKeyDirty = false;
-/** Explicit clear — blank alone means "keep", since the key is never echoed. */
-let polishKeyCleared = false;
 
 function showToast(msg: string, kind: "ok" | "error" = "ok"): void {
   toast.textContent = msg;
@@ -60,7 +62,6 @@ async function load(): Promise<void> {
     polishUrl: string;
     polishModel: string;
     polishKeySet: boolean;
-    polishKeyMasked: string;
     effectivePolishModel: string;
   };
   hotkeyEl.value = s.hotkey || "Alt+Space";
@@ -74,13 +75,7 @@ async function load(): Promise<void> {
   // Blank means "use .env" — never prefill these from the environment.
   polishUrlEl.value = s.polishUrl ?? "";
   polishModelInputEl.value = s.polishModel ?? "";
-  polishKeyEl.value = "";
-  polishKeyDirty = false;
-  polishKeyCleared = false;
-  polishKeyStatus.textContent = s.polishKeySet
-    ? `Key configured: ${s.polishKeyMasked}`
-    : "Not set — using .env";
-  polishKeyEl.placeholder = s.polishKeySet ? "•••••••• (leave blank to keep)" : "";
+  polishKeyEl.value = s.polishKeySet ? SAVED_KEY_MASK : "";
   polishModelEl.textContent = s.effectivePolishModel || "—";
 }
 
@@ -107,17 +102,6 @@ apiKeyEl.addEventListener("input", () => {
   apiKeyDirty = true;
 });
 
-polishKeyEl.addEventListener("input", () => {
-  polishKeyDirty = true;
-  polishKeyCleared = false;
-});
-
-document.getElementById("polishKeyClear")!.addEventListener("click", () => {
-  polishKeyEl.value = "";
-  polishKeyDirty = false;
-  polishKeyCleared = true;
-  polishKeyStatus.textContent = "Will use .env after saving";
-});
 
 document.getElementById("save")!.addEventListener("click", async () => {
   try {
@@ -132,18 +116,16 @@ document.getElementById("save")!.addEventListener("click", async () => {
     if (apiKeyDirty && apiKeyEl.value.trim()) {
       patch.apiKey = apiKeyEl.value.trim();
     }
-    if (polishKeyCleared) {
-      patch.polishApiKey = "";
-    } else if (polishKeyDirty && polishKeyEl.value.trim()) {
-      patch.polishApiKey = polishKeyEl.value.trim();
+    // Untouched mask → leave the stored key alone. Anything else (including
+    // blank, which falls back to .env) is saved as typed.
+    const polishKey = polishKeyEl.value.trim();
+    if (polishKey !== SAVED_KEY_MASK) {
+      patch.polishApiKey = polishKey;
     }
     await window.whisperFlow.saveSettings(patch);
     const result = await saveHotkeyPatch(patch);
     apiKeyDirty = false;
-    polishKeyDirty = false;
-    polishKeyCleared = false;
     apiKeyEl.value = "";
-    polishKeyEl.value = "";
     await load();
     if (!result.ok) {
       showToast(result.error || "Invalid hotkey — could not bind that shortcut", "error");
