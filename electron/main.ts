@@ -46,7 +46,6 @@ dotenv.config({ path: path.join(process.cwd(), ".env") });
 
 const isDev = !app.isPackaged;
 let quitting = false;
-
 let overlayWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -56,6 +55,57 @@ let settings: AppSettings = { ...DEFAULTS };
 let targetAppName = "";
 let lastPttAt = 0;
 const PTT_DEBOUNCE_MS = 180;
+
+function forceQuit(): void {
+  if (quitting) {
+    app.exit(0);
+    return;
+  }
+  quitting = true;
+  try {
+    tray?.destroy();
+  } catch {
+    /* ignore */
+  }
+  tray = null;
+  try {
+    closeHear();
+  } catch {
+    /* ignore */
+  }
+  try {
+    globalShortcut.unregisterAll();
+  } catch {
+    /* ignore */
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      win.destroy();
+    } catch {
+      /* ignore */
+    }
+  }
+  app.exit(0);
+}
+
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, forceQuit);
+}
+
+// Vite/Ctrl+C often kills the parent and leaves this tray app orphaned on macOS.
+if (process.env.VITE_DEV_SERVER_URL) {
+  const parent = process.ppid;
+  const iv = setInterval(() => {
+    try {
+      process.kill(parent, 0);
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? err.code : "";
+      if (code === "EPERM") return;
+      clearInterval(iv);
+      forceQuit();
+    }
+  }, 800);
+}
 
 function sanitizeEnvKey(raw: string | undefined): string {
   return String(raw ?? "")
@@ -279,10 +329,7 @@ function createTray(): void {
       { type: "separator" },
       {
         label: "Quit",
-        click: () => {
-          quitting = true;
-          app.quit();
-        },
+        click: () => forceQuit(),
       },
     ]),
   );
@@ -611,6 +658,16 @@ app.whenReady().then(() => {
       `  polish : ${polishModel()} ` +
       `${resolvePolishKey() ? "(key set)" : "(NO KEY — will paste raw text)"}`,
   );
+});
+
+app.on("before-quit", () => {
+  quitting = true;
+  try {
+    tray?.destroy();
+  } catch {
+    /* ignore */
+  }
+  tray = null;
 });
 
 app.on("will-quit", () => {
