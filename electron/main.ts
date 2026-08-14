@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import { pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
-import { loadSettings, saveSettings, type AppSettings } from "./settings-store";
+import { loadSettings, saveSettings, type AppSettings, DEFAULTS } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
 import { polishText, type PolishInput } from "./polish";
 import type { Tone } from "./tones";
@@ -32,7 +32,7 @@ let overlayWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let pttHeld = false;
-let settings: AppSettings = loadSettings();
+let settings: AppSettings = { ...DEFAULTS };
 /** Frontmost app at PTT start — used to restore focus before paste */
 let targetAppName = "";
 
@@ -244,12 +244,14 @@ function createTray(): void {
 }
 
 function registerHotkey(): boolean {
+  const accelerator = settings.hotkey?.trim() || DEFAULTS.hotkey;
   globalShortcut.unregisterAll();
-  const accelerator = settings.hotkey || "Alt+Space";
   const ok = globalShortcut.register(accelerator, () => {
     void togglePtt();
   });
-  if (!ok) console.error("Failed to register hotkey:", accelerator);
+  if (!ok) {
+    console.error("Failed to register hotkey:", accelerator);
+  }
   return ok;
 }
 
@@ -339,9 +341,26 @@ function wireIpc(): void {
         ? Math.min(2000, Math.max(100, Math.round(n)))
         : 400;
     }
+    const prevHotkey = settings.hotkey;
     settings = saveSettings({ ...settings, ...patch });
-    registerHotkey();
-    return { ok: true };
+    const hotkeyRegistered = registerHotkey();
+    if (!hotkeyRegistered && prevHotkey && prevHotkey !== settings.hotkey) {
+      settings = saveSettings({ ...settings, hotkey: prevHotkey });
+      registerHotkey();
+      return {
+        ok: false,
+        hotkeyRegistered: false,
+        error: `Could not bind ${patch.hotkey}. Kept ${prevHotkey}.`,
+        hotkey: prevHotkey,
+        polishTimeoutMs: settings.polishTimeoutMs,
+      };
+    }
+    return {
+      ok: true,
+      hotkeyRegistered,
+      hotkey: settings.hotkey,
+      polishTimeoutMs: settings.polishTimeoutMs,
+    };
   });
 
   ipcMain.handle("get-frontmost", async () => getFrontmostApp());
@@ -355,8 +374,7 @@ function wireIpc(): void {
       dictionary: Array.isArray(input?.dictionary)
         ? input.dictionary.map(String).slice(0, 200)
         : [],
-      timeoutMs:
-        typeof input?.timeoutMs === "number" ? input.timeoutMs : 400,
+      timeoutMs: settings.polishTimeoutMs,
     });
   });
 
@@ -382,7 +400,12 @@ function wireIpc(): void {
     hideOverlaySoon(0);
   });
 
-  ipcMain.handle("check-permissions", async () => ensurePermissions());
+  ipcMain.handle("check-permissions", async () => {
+    const result = await ensurePermissions();
+    // Global shortcuts often start working only after Accessibility is granted
+    registerHotkey();
+    return result;
+  });
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
     if (!overlayWin || overlayWin.isDestroyed()) return;

@@ -129,7 +129,7 @@ async function finishSession(): Promise<void> {
       text: raw,
       tone: payload.toneHint,
       dictionary: payload.dictionary ?? [],
-      timeoutMs: Math.max(payload.polishTimeoutMs ?? 400, 1200),
+      timeoutMs: payload.polishTimeoutMs ?? 400,
     });
 
     els.committed.textContent = result.text;

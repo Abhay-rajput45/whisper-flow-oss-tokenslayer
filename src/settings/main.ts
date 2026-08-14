@@ -87,15 +87,45 @@ document.getElementById("save")!.addEventListener("click", async () => {
     if (apiKeyDirty && apiKeyEl.value.trim()) {
       patch.apiKey = apiKeyEl.value.trim();
     }
-    await window.whisperFlow.saveSettings(patch);
+    const result = (await window.whisperFlow.saveSettings(patch)) as {
+      ok: boolean;
+      hotkeyRegistered?: boolean;
+      error?: string;
+      hotkey?: string;
+      polishTimeoutMs?: number;
+    };
     apiKeyDirty = false;
     apiKeyEl.value = "";
     await load();
-    showToast("Saved");
+    if (!result.ok) {
+      showToast(result.error || "Hotkey could not be registered");
+      return;
+    }
+    showToast(
+      result.hotkeyRegistered === false
+        ? "Saved, but the hotkey could not be bound — check Accessibility"
+        : "Saved — hotkey and timeout are live",
+    );
   } catch (err) {
     showToast(err instanceof Error ? err.message : "Save failed");
   }
 });
+
+let applyTimer: ReturnType<typeof setTimeout> | null = null;
+function applyHotkeyAndTimeoutSoon(): void {
+  if (applyTimer) clearTimeout(applyTimer);
+  applyTimer = setTimeout(() => {
+    void window.whisperFlow.saveSettings({
+      hotkey: hotkeyEl.value.trim() || "Alt+Space",
+      polishTimeoutMs: Number(polishEl.value) || 400,
+    });
+  }, 400);
+}
+
+hotkeyEl.addEventListener("change", applyHotkeyAndTimeoutSoon);
+hotkeyEl.addEventListener("blur", applyHotkeyAndTimeoutSoon);
+polishEl.addEventListener("change", applyHotkeyAndTimeoutSoon);
+polishEl.addEventListener("blur", applyHotkeyAndTimeoutSoon);
 
 document.getElementById("checkPerms")!.addEventListener("click", async () => {
   const perms = (await window.whisperFlow.checkPermissions()) as {
