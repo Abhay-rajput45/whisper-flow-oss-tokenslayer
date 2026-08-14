@@ -5,7 +5,6 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
     "outDir": "dist-electron",
-    "rootDir": "electron",
     "strict": true,
     "skipLibCheck": true,
     "declaration": false,
@@ -13,5 +12,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts"]
+  "include": ["electron/**/*.ts", "core/**/*.ts"]
 }

@@ -24,6 +24,7 @@ import {
   DEFAULTS,
 } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
+import { installLogging } from "./logging";
 import { polishText, polishModel, type PolishInput } from "./polish";
 import {
   extractLearnableTerms,
@@ -43,6 +44,9 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config({ path: path.join(process.cwd(), ".env") });
+
+// Sinks must exist before anything logs. Reads LOG* from the env just loaded.
+installLogging(process.env);
 
 app.setName("Verbatim");
 
