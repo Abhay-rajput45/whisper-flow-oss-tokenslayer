@@ -24,7 +24,14 @@ import {
   DEFAULTS,
 } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
-import { polishText, polishModel, type PolishInput } from "./polish";
+import { installLogging } from "./logging";
+import {
+  polishText,
+  effectivePolishModel,
+  polishStatus,
+  type PolishInput,
+  type PolishOverrides,
+} from "./polish";
 import {
   extractLearnableTerms,
   effectiveDictionary,
@@ -43,6 +50,9 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config({ path: path.join(process.cwd(), ".env") });
+
+// Sinks must exist before anything logs. Reads LOG* from the env just loaded.
+installLogging(process.env);
 
 app.setName("Verbatim");
 
@@ -131,11 +141,16 @@ function resolveApiKey(): string {
   return process.env.PYAI_API_KEY?.trim() ?? "";
 }
 
-/** Gemini key — polish only. Kept separate so one bad key can't break both. */
-function resolvePolishKey(): string {
-  const fromSettings = settings.geminiApiKey?.trim() ?? "";
-  if (fromSettings) return fromSettings;
-  return process.env.GEMINI_API_KEY?.trim() ?? "";
+/**
+ * Polish provider overrides from Settings. Blank fields fall through to the
+ * TEXT_LLM_* env values inside the LLM layer — never resolve them here.
+ */
+function polishOverrides(): PolishOverrides {
+  return {
+    url: settings.polishUrl,
+    model: settings.polishModel,
+    apiKey: settings.polishApiKey,
+  };
 }
 
 function preloadPath(): string {
@@ -435,9 +450,11 @@ async function togglePtt(): Promise<void> {
 function wireIpc(): void {
   ipcMain.handle("get-settings", () => {
     // Never return raw keys to the renderer — only "is it set" + a masked hint.
-    const { apiKey, geminiApiKey, ...rest } = settings;
+    const { apiKey, polishApiKey, ...rest } = settings;
     const envKey = sanitizeEnvKey(process.env.PYAI_API_KEY);
     return {
+      // polishUrl / polishModel are plain overrides and echo back into the form;
+      // blank stays blank so the env value is never presented as user input.
       ...rest,
       apiKeySet: Boolean(apiKey || envKey),
       apiKeyMasked: apiKey
@@ -445,13 +462,9 @@ function wireIpc(): void {
         : envKey
           ? "(from env)"
           : "",
-      geminiKeySet: Boolean(geminiApiKey || process.env.GEMINI_API_KEY),
-      geminiKeyMasked: geminiApiKey
-        ? `${geminiApiKey.slice(0, 8)}…`
-        : process.env.GEMINI_API_KEY
-          ? "(from env)"
-          : "",
-      polishModel: polishModel(),
+      // Only whether a key exists — the renderer shows a mask, never the value.
+      polishKeySet: Boolean(polishApiKey),
+      effectivePolishModel: effectivePolishModel(polishOverrides()),
     };
   });
 
@@ -465,15 +478,22 @@ function wireIpc(): void {
         delete patch.apiKey;
       }
     }
-    if (patch.geminiApiKey !== undefined) {
-      const k = String(patch.geminiApiKey).trim();
-      if (k.length > 0 && k.length < 8) {
-        throw new Error("Gemini API key looks too short");
+    // Blank is meaningful for the polish fields: it means "fall back to env".
+    // Only guard against writing a masked placeholder over a real key.
+    if (patch.polishApiKey !== undefined) {
+      const k = String(patch.polishApiKey).trim();
+      // Never write a mask back over the real key; blank is a genuine clear.
+      if (k.includes("…") || /^[•*]+$/.test(k) || k === "(from env)") {
+        delete patch.polishApiKey;
+      } else {
+        patch.polishApiKey = k;
       }
-      // Guard against saving the masked placeholder back over the real key.
-      if (k.includes("…") || k === "(from env)") {
-        delete patch.geminiApiKey;
-      }
+    }
+    if (patch.polishUrl !== undefined) {
+      patch.polishUrl = String(patch.polishUrl).trim().slice(0, 512);
+    }
+    if (patch.polishModel !== undefined) {
+      patch.polishModel = String(patch.polishModel).trim().slice(0, 128);
     }
     if (patch.dictionary) {
       patch.dictionary = userDictionaryOnly(patch.dictionary);
@@ -534,7 +554,6 @@ function wireIpc(): void {
   });
 
   ipcMain.handle("polish-text", async (_e, input: PolishInput) => {
-    const key = resolvePolishKey();
     const timeoutMs =
       typeof input?.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
         ? input.timeoutMs
@@ -544,9 +563,10 @@ function wireIpc(): void {
         ? input.dictionary
         : settings.dictionary,
     );
+    const overrides = polishOverrides();
     const result = await polishText({
       text: String(input?.text ?? ""),
-      apiKey: key,
+      overrides,
       tone: (input?.tone as Tone) || "neutral",
       dictionary,
       timeoutMs,
@@ -554,12 +574,12 @@ function wireIpc(): void {
     });
     // Dev only — never log polished text in a packaged build.
     if (isDev) {
-      const why = !key
-        ? "NO KEY (local cleanup only)"
-        : result.polished
-          ? "polished"
-          : `fell back to local cleanup (budget ${timeoutMs}ms)`;
-      console.log(`[polish] ${why} in ${result.ms}ms via ${polishModel()}`);
+      const why = result.polished
+        ? "polished"
+        : `local cleanup only (budget ${timeoutMs}ms)`;
+      console.log(
+        `[polish] ${why} in ${result.ms}ms via ${effectivePolishModel(overrides)}`,
+      );
     }
     return result;
   });
@@ -655,10 +675,15 @@ app.whenReady().then(() => {
   console.log(
     `Verbatim ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
   );
+  const polish = polishStatus(polishOverrides());
   console.log(
     `  STT    : PyAI Hear ${resolveApiKey() ? "(key set)" : "(NO KEY)"}\n` +
-      `  polish : ${polishModel()} ` +
-      `${resolvePolishKey() ? "(key set)" : "(NO KEY — will paste raw text)"}`,
+      `  polish : ${polish.model} ` +
+      `${
+        polish.ready
+          ? "(configured)"
+          : `(NOT CONFIGURED — set ${polish.missing.join(", ")}; will paste locally cleaned text)`
+      }`,
   );
 });
 

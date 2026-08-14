@@ -4,10 +4,20 @@
  * Local preClean + mishears + dictionary always run (never blocks paste).
  * Cloud polish is best-effort within timeout.
  *
- * Provider-agnostic: any OpenAI-compatible /chat/completions endpoint works.
- * Defaults to Gemini Flash-Lite via Google's OpenAI compat surface.
+ * This file owns the polish *pipeline*: local cleanup, prompt, post-processing
+ * and fallback policy. The network call itself lives in core/providers/llm,
+ * which is provider-neutral and configured entirely through TEXT_LLM_* env —
+ * any OpenAI-compatible /chat/completions endpoint works.
  */
 
+import {
+  complete,
+  missingEndpointFields,
+  resolveLlmEndpoint,
+  withTimeout,
+  type LlmOverrides,
+} from "../core/providers/llm";
+import { getLogger } from "../core/logging/logger";
 import {
   applyDictionary,
   applyMishears,
@@ -18,19 +28,37 @@ import type { Tone } from "./tones";
 
 export type { Tone };
 
-/** Override to swap providers without touching code. */
-const BASE_URL =
-  process.env.POLISH_BASE_URL?.trim() ||
-  "https://generativelanguage.googleapis.com/v1beta/openai";
-const MODEL = process.env.POLISH_MODEL?.trim() || "gemini-flash-lite-latest";
+const log = getLogger("polish");
 
 const DEFAULT_POLISH_TIMEOUT_MS = 2000;
 const MAX_POLISH_TIMEOUT_MS = 4000;
 const MIN_POLISH_TIMEOUT_MS = 100;
 const MAX_INPUT_CHARS = 8000;
 
-export function polishModel(): string {
-  return MODEL;
+/** Settings overrides; blank falls through to the TEXT_LLM_* env values. */
+export type PolishOverrides = LlmOverrides;
+
+/** Shown in Settings — the model that will actually be used. */
+export function effectivePolishModel(overrides?: PolishOverrides): string {
+  return (
+    resolveLlmEndpoint({ overrides, timeoutMs: 0, env: process.env }).model ||
+    "not configured"
+  );
+}
+
+/** Config summary for startup diagnostics. */
+export function polishStatus(overrides?: PolishOverrides): {
+  model: string;
+  ready: boolean;
+  missing: string[];
+} {
+  const cfg = resolveLlmEndpoint({ overrides, timeoutMs: 0, env: process.env });
+  const missing = missingEndpointFields(cfg);
+  return {
+    model: cfg.model || "not configured",
+    ready: missing.length === 0,
+    missing,
+  };
 }
 
 const TONE_INSTRUCTIONS: Record<Tone, string> = {
@@ -43,9 +71,12 @@ const TONE_INSTRUCTIONS: Record<Tone, string> = {
 };
 
 export type PolishInput = {
-  /** Polish-provider key (Gemini by default) — NOT the PyAI/Hear key. */
   text: string;
-  apiKey: string;
+  /**
+   * Polish-provider overrides from Settings — NOT the PyAI/Hear key.
+   * Blank/absent falls through to TEXT_LLM_* env values.
+   */
+  overrides?: PolishOverrides;
   tone: Tone;
   dictionary: string[];
   timeoutMs: number;
@@ -102,17 +133,23 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
     return localOnlyResult("", started, "failed");
   }
 
-  // Always available even if Gemini is slow/down/missing key
+  // Always available even if the model is slow/down/missing key
   const cleaned = cleanDictationLocal(raw, dictionary);
-  const apiKey = String(input.apiKey ?? "").trim();
-  if (!apiKey) {
-    return localOnlyResult(cleaned || raw, started);
-  }
 
   // Measured Gemini Flash-Lite latency ~780–1400ms; leave p99 room.
   const timeoutMs = clampTimeout(input.timeoutMs || DEFAULT_POLISH_TIMEOUT_MS);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const cfg = resolveLlmEndpoint({
+    // Settings values win; TEXT_LLM_* env is the default.
+    overrides: input.overrides,
+    timeoutMs,
+    env: process.env,
+  });
+
+  const missing = missingEndpointFields(cfg);
+  if (missing.length > 0) {
+    log.warn("local cleanup only", { reason: "not_configured", missing });
+    return localOnlyResult(cleaned || raw, started);
+  }
 
   const tone = (["casual", "formal", "neutral"].includes(input.tone)
     ? input.tone
@@ -129,59 +166,45 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
     ? `Target app: ${input.appName.trim().slice(0, 64)}.`
     : "";
 
-  const body = {
-    model: MODEL,
-    temperature: 0.1,
-    max_tokens: scaledMaxTokens(cleaned.length),
-    messages: [
-      {
-        role: "system",
-        content:
-          "You clean up voice dictation for paste-ready text. " +
-          "Remove filler (um, uh, like, you know, er, ah, hmm). " +
-          "Fix punctuation, capitalization, and mid-sentence self-corrections (keep the correction, drop the false start). " +
-          "Preserve meaning and the speaker's intent. Do not invent facts or expand content. " +
-          "Return ONLY the rewritten text — no quotes, no preamble, no markdown.",
-      },
-      {
-        role: "user",
-        content: [TONE_INSTRUCTIONS[tone], dictLine, appLine, "", "Dictation:", cleaned]
-          .filter(Boolean)
-          .join("\n"),
-      },
-    ],
+  const messages = [
+    {
+      role: "system" as const,
+      content:
+        "You clean up voice dictation for paste-ready text. " +
+        "Remove filler (um, uh, like, you know, er, ah, hmm). " +
+        "Fix punctuation, capitalization, and mid-sentence self-corrections (keep the correction, drop the false start). " +
+        "Preserve meaning and the speaker's intent. Do not invent facts or expand content. " +
+        "Return ONLY the rewritten text — no quotes, no preamble, no markdown.",
+    },
+    {
+      role: "user" as const,
+      content: [TONE_INSTRUCTIONS[tone], dictLine, appLine, "", "Dictation:", cleaned]
+        .filter(Boolean)
+        .join("\n"),
+    },
+  ];
+
+  // Env config wins; these are this pipeline's request-shaping defaults.
+  const requestCfg = {
+    ...cfg,
+    temperature: cfg.temperature ?? 0.1,
+    maxTokens: cfg.maxTokens ?? scaledMaxTokens(cleaned.length),
   };
 
+  const { signal, cancel } = withTimeout(timeoutMs);
   try {
-    const res = await fetch(`${BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const res = await complete(requestCfg, messages, signal);
     const ms = Date.now() - started;
-    const rawBody = await res.text();
-    let data: {
-      choices?: Array<{ message?: { content?: string } }>;
-    } = {};
-    try {
-      data = rawBody ? (JSON.parse(rawBody) as typeof data) : {};
-    } catch {
-      return {
-        text: cleaned || raw,
-        polished: false,
-        localOnly: true,
-        ms,
-        status: "partial",
-      };
-    }
+    const modelText = res.ok ? stripModelChrome(res.text) : "";
 
-    const out = data.choices?.[0]?.message?.content?.trim();
-    const modelText = out ? stripModelChrome(out) : "";
-    if (!res.ok || !modelText) {
+    if (!modelText) {
+      log.warn("local cleanup only", {
+        reason: res.reason ?? "empty_content",
+        status: res.status,
+        mode: res.mode,
+        duration_ms: ms,
+        body: res.snippet,
+      });
       return {
         text: cleaned || raw,
         polished: false,
@@ -193,6 +216,7 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
 
     // Don't re-strip fillers on model output; still force mishears + dictionary.
     const finalText = applyDictionary(applyMishears(modelText), dictionary);
+    log.info("polished", { chars: finalText.length, mode: res.mode, duration_ms: ms });
     return {
       text: finalText,
       polished: true,
@@ -200,9 +224,15 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
       ms,
       status: "shipped",
     };
-  } catch {
+  } catch (err) {
+    log.warn("local cleanup only", {
+      reason: signal.aborted ? "timeout" : "threw",
+      timeoutMs,
+      duration_ms: Date.now() - started,
+      err,
+    });
     return localOnlyResult(cleaned || raw, started);
   } finally {
-    clearTimeout(timer);
+    cancel();
   }
 }

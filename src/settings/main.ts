@@ -1,19 +1,27 @@
 const apiKeyEl = document.getElementById("apiKey") as HTMLInputElement;
-const geminiKeyEl = document.getElementById("geminiApiKey") as HTMLInputElement;
+const polishUrlEl = document.getElementById("polishUrl") as HTMLInputElement;
+const polishKeyEl = document.getElementById("polishApiKey") as HTMLInputElement;
+const polishModelInputEl = document.getElementById(
+  "polishModel",
+) as HTMLInputElement;
 const hotkeyEl = document.getElementById("hotkey") as HTMLInputElement;
 const polishEl = document.getElementById("polishTimeout") as HTMLInputElement;
 const dictInput = document.getElementById("dictInput") as HTMLInputElement;
 const dictList = document.getElementById("dictList") as HTMLUListElement;
 const keyStatus = document.getElementById("keyStatus")!;
-const geminiKeyStatus = document.getElementById("geminiKeyStatus")!;
-const polishModelEl = document.getElementById("polishModel")!;
+const polishModelEl = document.getElementById("polishModelEffective")!;
+
+/**
+ * Stands in for a saved polish key so the raw value never reaches the renderer.
+ * Left untouched → keep the stored key. Cleared → fall back to .env.
+ */
+const SAVED_KEY_MASK = "••••••••••••";
 const toast = document.getElementById("toast")!;
 const permOut = document.getElementById("permOut")!;
 const toneOut = document.getElementById("toneOut")!;
 
 let dictionary: string[] = [];
 let apiKeyDirty = false;
-let geminiKeyDirty = false;
 
 function showToast(msg: string, kind: "ok" | "error" = "ok"): void {
   toast.textContent = msg;
@@ -51,9 +59,10 @@ async function load(): Promise<void> {
     polishTimeoutMs: number;
     apiKeySet: boolean;
     apiKeyMasked: string;
-    geminiKeySet: boolean;
-    geminiKeyMasked: string;
+    polishUrl: string;
     polishModel: string;
+    polishKeySet: boolean;
+    effectivePolishModel: string;
   };
   hotkeyEl.value = s.hotkey || "Alt+Space";
   polishEl.value = String(s.polishTimeoutMs ?? 2000);
@@ -63,13 +72,11 @@ async function load(): Promise<void> {
     ? `Key configured: ${s.apiKeyMasked}`
     : "No key set — paste one below or export PYAI_API_KEY";
   apiKeyEl.placeholder = s.apiKeySet ? "•••••••• (leave blank to keep)" : "pyai_…";
-  geminiKeyStatus.textContent = s.geminiKeySet
-    ? `Key configured: ${s.geminiKeyMasked}`
-    : "No key set — polish will paste raw text";
-  geminiKeyEl.placeholder = s.geminiKeySet
-    ? "•••••••• (leave blank to keep)"
-    : "AIza…";
-  polishModelEl.textContent = s.polishModel || "—";
+  // Blank means "use .env" — never prefill these from the environment.
+  polishUrlEl.value = s.polishUrl ?? "";
+  polishModelInputEl.value = s.polishModel ?? "";
+  polishKeyEl.value = s.polishKeySet ? SAVED_KEY_MASK : "";
+  polishModelEl.textContent = s.effectivePolishModel || "—";
 }
 
 document.getElementById("dictAdd")!.addEventListener("click", () => {
@@ -95,9 +102,6 @@ apiKeyEl.addEventListener("input", () => {
   apiKeyDirty = true;
 });
 
-geminiKeyEl.addEventListener("input", () => {
-  geminiKeyDirty = true;
-});
 
 document.getElementById("save")!.addEventListener("click", async () => {
   try {
@@ -105,19 +109,23 @@ document.getElementById("save")!.addEventListener("click", async () => {
       hotkey: hotkeyEl.value.trim() || "Alt+Space",
       dictionary,
       polishTimeoutMs: Number(polishEl.value) || 2000,
+      // Blank is meaningful: it falls back to the .env value.
+      polishUrl: polishUrlEl.value.trim(),
+      polishModel: polishModelInputEl.value.trim(),
     };
     if (apiKeyDirty && apiKeyEl.value.trim()) {
       patch.apiKey = apiKeyEl.value.trim();
     }
-    if (geminiKeyDirty && geminiKeyEl.value.trim()) {
-      patch.geminiApiKey = geminiKeyEl.value.trim();
+    // Untouched mask → leave the stored key alone. Anything else (including
+    // blank, which falls back to .env) is saved as typed.
+    const polishKey = polishKeyEl.value.trim();
+    if (polishKey !== SAVED_KEY_MASK) {
+      patch.polishApiKey = polishKey;
     }
     await window.whisperFlow.saveSettings(patch);
     const result = await saveHotkeyPatch(patch);
     apiKeyDirty = false;
-    geminiKeyDirty = false;
     apiKeyEl.value = "";
-    geminiKeyEl.value = "";
     await load();
     if (!result.ok) {
       showToast(result.error || "Invalid hotkey — could not bind that shortcut", "error");

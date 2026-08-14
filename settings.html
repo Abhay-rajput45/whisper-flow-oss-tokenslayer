@@ -11,25 +11,35 @@
     <main class="wrap">
       <header>
         <h1>Verbatim</h1>
-        <p class="sub">Type with your voice, everywhere — macOS MVP on PyAI Hear</p>
+        <p class="sub">Type with your voice, everywhere</p>
       </header>
 
       <section class="card">
         <h2>API keys</h2>
         <p class="hint">
-          Stored in app userData (mode 0600). Prefer env <code>PYAI_API_KEY</code> /
-          <code>GEMINI_API_KEY</code> for local dev.
+          Stored in app userData (mode 0600). Leave the polish fields blank to use
+          the <code>TEXT_LLM_*</code> values from <code>.env</code>.
         </p>
         <label>
           PyAI API key — speech to text (needs <code>hear:stream</code>)
           <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="pyai_…" />
         </label>
         <p id="keyStatus" class="status"></p>
+
         <label>
-          Gemini API key — polish
-          <input id="geminiApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…" />
+          Polish API URL
+          <input id="polishUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://…/v1/chat/completions" />
         </label>
-        <p id="geminiKeyStatus" class="status"></p>
+
+        <label>
+          Polish API key
+          <input id="polishApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="" />
+        </label>
+
+        <label>
+          Polish API model
+          <input id="polishModel" type="text" autocomplete="off" spellcheck="false" placeholder="" />
+        </label>
       </section>
 
       <section class="card">
@@ -45,7 +55,7 @@
       <section class="card">
         <h2>Polish</h2>
         <p class="hint">
-          Model: <code id="polishModel">—</code>. Measured ~800–1400 ms, so budgets
+          Model: <code id="polishModelEffective">—</code>. Measured ~800–1400 ms, so budgets
           under ~1500 ms will fall back to raw text on most calls.
         </p>
         <label>
