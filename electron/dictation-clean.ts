@@ -159,7 +159,7 @@ export function applyDictionary(text: string, dictionary: string[]): string {
   return out;
 }
 
-/** Full local cleanup path used before (and after) NFuse. */
+/** Full local cleanup path used before cloud polish (and as timeout fallback). */
 export function cleanDictationLocal(
   text: string,
   dictionary: string[],

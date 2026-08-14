@@ -13,7 +13,7 @@ const FLUSH_MAX_MS = 420;
 const FLUSH_POLL_MS = 60;
 const FLUSH_STABLE_MS = 120;
 const PCM_QUEUE_MAX = 80;
-const DEFAULT_POLISH_TIMEOUT_MS = 700;
+const DEFAULT_POLISH_TIMEOUT_MS = 2000;
 
 const els = {
   committed: document.getElementById("committed")!,
@@ -181,7 +181,7 @@ async function finishSession(): Promise<void> {
 
     setBanner("polishing…");
     const timeoutMs = Math.min(
-      2000,
+      4000,
       Math.max(100, payload.polishTimeoutMs ?? DEFAULT_POLISH_TIMEOUT_MS),
     );
 

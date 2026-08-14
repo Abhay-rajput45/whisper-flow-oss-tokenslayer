@@ -82,13 +82,6 @@ function resolvePolishKey(): string {
   return process.env.GEMINI_API_KEY?.trim() ?? "";
 }
 
-/** Gemini key — polish only. Kept separate so one bad key can't break both. */
-function resolvePolishKey(): string {
-  const fromSettings = settings.geminiApiKey?.trim() ?? "";
-  if (fromSettings) return fromSettings;
-  return process.env.GEMINI_API_KEY?.trim() ?? "";
-}
-
 function preloadPath(): string {
   // vite-plugin-electron emits preload.mjs next to main
   return path.join(__dirname, "preload.mjs");
@@ -492,31 +485,27 @@ function wireIpc(): void {
       typeof input?.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
         ? input.timeoutMs
         : settings.polishTimeoutMs;
-    const budget =
-      typeof input?.timeoutMs === "number" ? input.timeoutMs : 2000;
+    const dictionary = normalizeDictionary(
+      Array.isArray(input?.dictionary) && input.dictionary.length > 0
+        ? input.dictionary
+        : settings.dictionary,
+    );
     const result = await polishText({
       text: String(input?.text ?? ""),
       apiKey: key,
       tone: (input?.tone as Tone) || "neutral",
-      dictionary: Array.isArray(input?.dictionary)
-        ? input.dictionary.map(String).slice(0, 200)
-        : [],
-      timeoutMs: settings.polishTimeoutMs,
+      dictionary,
+      timeoutMs,
+      appName: String(input?.appName ?? "").slice(0, 64),
     });
-    // "Polish looks like it didn't run" is indistinguishable from "it ran fast"
-    // without this. Dev only — never log polished text in a packaged build.
+    // Dev only — never log polished text in a packaged build.
     if (isDev) {
       const why = !key
-        ? "NO KEY"
+        ? "NO KEY (local cleanup only)"
         : result.polished
           ? "polished"
-          : `fell back (budget ${budget}ms)`;
+          : `fell back to local cleanup (budget ${timeoutMs}ms)`;
       console.log(`[polish] ${why} in ${result.ms}ms via ${polishModel()}`);
-      if (!result.polished && key) {
-        console.log(
-          `[polish] raw kept: ${JSON.stringify(result.text.slice(0, 120))}`,
-        );
-      }
     }
     return result;
   });

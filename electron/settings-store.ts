@@ -46,7 +46,7 @@ function clampPolishTimeout(n: unknown): number {
   if (typeof n !== "number" || !Number.isFinite(n)) {
     return DEFAULTS.polishTimeoutMs;
   }
-  return Math.min(2000, Math.max(100, Math.round(n)));
+  return Math.min(4000, Math.max(100, Math.round(n)));
 }
 
 export function loadSettings(): AppSettings {
@@ -70,11 +70,11 @@ export function saveSettings(next: AppSettings): AppSettings {
   const file = settingsPath();
   ensureDir(file);
   const toWrite: AppSettings = {
-    apiKey: String(next.apiKey ?? "").slice(0, 256),
-    geminiApiKey: String(next.geminiApiKey ?? "").slice(0, 256),
+    apiKey: String(next.apiKey ?? "").slice(0, 512),
+    geminiApiKey: String(next.geminiApiKey ?? "").slice(0, 512),
     hotkey: String(next.hotkey ?? DEFAULTS.hotkey).slice(0, 64),
     dictionary: normalizeDictionary(next.dictionary),
-    polishTimeoutMs: next.polishTimeoutMs ?? DEFAULTS.polishTimeoutMs,
+    polishTimeoutMs: clampPolishTimeout(next.polishTimeoutMs),
   };
   fs.writeFileSync(file, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
   return toWrite;

@@ -1,6 +1,11 @@
 /**
  * Polish dictation in the main process (no CORS).
- * Local preClean + dictionary always run; NFuse is best-effort within timeout.
+ *
+ * Local preClean + mishears + dictionary always run (never blocks paste).
+ * Cloud polish is best-effort within timeout.
+ *
+ * Provider-agnostic: any OpenAI-compatible /chat/completions endpoint works.
+ * Defaults to Gemini Flash-Lite via Google's OpenAI compat surface.
  */
 
 import {
@@ -13,30 +18,24 @@ import type { Tone } from "./tones";
 
 export type { Tone };
 
-const DEFAULT_POLISH_TIMEOUT_MS = 700;
-const MAX_POLISH_TIMEOUT_MS = 2000;
-const MIN_POLISH_TIMEOUT_MS = 100;
-const MAX_INPUT_CHARS = 8000;
- *
- * Provider-agnostic: any OpenAI-compatible /chat/completions endpoint works.
- * Defaults to Gemini Flash-Lite via Google's OpenAI compat surface.
- */
-
 /** Override to swap providers without touching code. */
 const BASE_URL =
   process.env.POLISH_BASE_URL?.trim() ||
   "https://generativelanguage.googleapis.com/v1beta/openai";
 const MODEL = process.env.POLISH_MODEL?.trim() || "gemini-flash-lite-latest";
 
+const DEFAULT_POLISH_TIMEOUT_MS = 2000;
+const MAX_POLISH_TIMEOUT_MS = 4000;
+const MIN_POLISH_TIMEOUT_MS = 100;
+const MAX_INPUT_CHARS = 8000;
+
 export function polishModel(): string {
   return MODEL;
 }
 
-export type Tone = "casual" | "formal" | "neutral";
-
 const TONE_INSTRUCTIONS: Record<Tone, string> = {
   casual:
-    "Tone: casual chat (Slack/IM). Keep it natural, concise, friendly. Contractions OK. No corporate fluff.",
+    "Tone: casual chat (Slack/IM). Natural, concise, friendly. contractions OK. No corporate fluff. Light punctuation.",
   formal:
     "Tone: professional email/document. Clear sentences, proper grammar, no slang. Warm but polished. Complete sentences.",
   neutral:
@@ -56,7 +55,7 @@ export type PolishInput = {
 export type PolishResult = {
   text: string;
   polished: boolean;
-  /** true when only local cleanup ran (NFuse skipped/failed/timeout) */
+  /** true when only local cleanup ran (cloud polish skipped/failed/timeout) */
   localOnly: boolean;
   ms: number;
   status: "shipped" | "partial" | "failed";
@@ -81,28 +80,37 @@ function stripModelChrome(out: string): string {
     .trim();
 }
 
+function localOnlyResult(
+  text: string,
+  started: number,
+  status: "partial" | "failed" = "partial",
+): PolishResult {
+  return {
+    text,
+    polished: false,
+    localOnly: true,
+    ms: Date.now() - started,
+    status,
+  };
+}
+
 export async function polishText(input: PolishInput): Promise<PolishResult> {
   const started = Date.now();
   const dictionary = normalizeDictionary(input.dictionary);
   const raw = String(input.text ?? "").trim().slice(0, MAX_INPUT_CHARS);
   if (!raw) {
-    return {
-      text: "",
-      polished: false,
-      localOnly: true,
-      ms: 0,
-      status: "failed",
-    };
+    return localOnlyResult("", started, "failed");
   }
 
+  // Always available even if Gemini is slow/down/missing key
   const cleaned = cleanDictationLocal(raw, dictionary);
   const apiKey = String(input.apiKey ?? "").trim();
-  if (!apiKey) return { text: raw, polished: false, ms: 0 };
+  if (!apiKey) {
+    return localOnlyResult(cleaned || raw, started);
+  }
 
-  const started = Date.now();
-  // Measured Gemini Flash-Lite latency for this prompt is ~780-1400ms, so the
-  // spec's 400ms budget would abort every call. Ceiling raised to leave p99 room.
-  const timeoutMs = Math.min(4000, Math.max(100, input.timeoutMs || 2000));
+  // Measured Gemini Flash-Lite latency ~780–1400ms; leave p99 room.
+  const timeoutMs = clampTimeout(input.timeoutMs || DEFAULT_POLISH_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -123,8 +131,8 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
 
   const body = {
     model: MODEL,
-    temperature: 0.2,
-    max_tokens: 512,
+    temperature: 0.1,
+    max_tokens: scaledMaxTokens(cleaned.length),
     messages: [
       {
         role: "system",
@@ -142,8 +150,6 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
           .join("\n"),
       },
     ],
-    // No reasoning_effort / extra_body: Gemini's compat layer returns HTTP 400
-    // for both, and the lite models don't over-think this prompt anyway.
   };
 
   try {
@@ -185,8 +191,7 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
       };
     }
 
-    // Don't re-strip fillers on model output (may be intentional words);
-    // still force mishears + preferred dictionary spellings.
+    // Don't re-strip fillers on model output; still force mishears + dictionary.
     const finalText = applyDictionary(applyMishears(modelText), dictionary);
     return {
       text: finalText,
@@ -196,13 +201,7 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
       status: "shipped",
     };
   } catch {
-    return {
-      text: cleaned || raw,
-      polished: false,
-      localOnly: true,
-      ms: Date.now() - started,
-      status: "partial",
-    };
+    return localOnlyResult(cleaned || raw, started);
   } finally {
     clearTimeout(timer);
   }
