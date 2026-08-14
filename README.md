@@ -1,4 +1,4 @@
-# WhisperFlow OSS
+# Verbatim
 
 **Type with your voice, everywhere.** Free, open-source dictation for macOS — live words while you speak, then a clean paste into whatever app is focused.
 
@@ -52,7 +52,7 @@ npm run self-check
 
 ## Permissions
 
-On first paste, macOS will ask for **Accessibility** (System Settings → Privacy & Security → Accessibility → enable WhisperFlow / Electron / Terminal). Mic access is requested when you start a session. Use **Settings → Check mic + Accessibility**.
+On first paste, macOS will ask for **Accessibility** (System Settings → Privacy & Security → Accessibility → enable Verbatim / Electron / Terminal). Mic access is requested when you start a session. Use **Settings → Check mic + Accessibility**.
 
 ## How it works
 

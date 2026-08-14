@@ -31,11 +31,32 @@ function settingsPath(): string {
   try {
     return path.join(app.getPath("userData"), "settings.json");
   } catch {
-    return path.join(
-      process.env.HOME ?? ".",
-      ".whisper-flow",
-      "settings.json",
+    return path.join(process.env.HOME ?? ".", ".verbatim", "settings.json");
+  }
+}
+
+function migrateSettingsIfNeeded(dest: string): void {
+  if (fs.existsSync(dest)) return;
+  const home = process.env.HOME ?? ".";
+  const candidates: string[] = [];
+  try {
+    candidates.push(
+      path.join(app.getPath("appData"), "whisper-flow-oss", "settings.json"),
     );
+  } catch {
+    /* app not ready */
+  }
+  candidates.push(path.join(home, ".whisper-flow", "settings.json"));
+  for (const src of candidates) {
+    try {
+      if (!fs.existsSync(src)) continue;
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      fs.chmodSync(dest, 0o600);
+      return;
+    } catch {
+      /* try next */
+    }
   }
 }
 
@@ -52,6 +73,7 @@ function clampPolishTimeout(n: unknown): number {
 
 export function loadSettings(): AppSettings {
   const file = settingsPath();
+  migrateSettingsIfNeeded(file);
   try {
     if (!fs.existsSync(file)) return { ...DEFAULTS };
     const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<AppSettings>;

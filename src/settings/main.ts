@@ -191,7 +191,7 @@ document.getElementById("checkPerms")!.addEventListener("click", async () => {
   ];
   if (perms.opened?.length) {
     lines.push(
-      `Opened System Settings → Privacy & Security (${perms.opened.join(", ")}). Turn on WhisperFlow / Electron, then click Check again.`,
+      `Opened System Settings → Privacy & Security (${perms.opened.join(", ")}). Turn on Verbatim / Electron, then click Check again.`,
     );
     if (perms.opened.length === 1 && (!perms.accessibility || perms.microphone !== "granted")) {
       const still = [];

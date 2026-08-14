@@ -1,7 +1,7 @@
 {
-  "name": "whisper-flow-oss",
+  "name": "verbatim",
   "version": "0.1.0",
-  "description": "Type with your voice, everywhere — open-source Wispr Flow–style dictation on PyAI Hear",
+  "description": "Type with your voice, everywhere — Verbatim dictation on PyAI Hear",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -28,7 +28,7 @@
     "electron",
     "macos"
   ],
-  "author": "WhisperFlow OSS",
+  "author": "Verbatim",
   "license": "MIT",
   "engines": {
     "node": ">=20"

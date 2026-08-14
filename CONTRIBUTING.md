@@ -1,4 +1,4 @@
-# Contributing to WhisperFlow OSS
+# Contributing to Verbatim
 
 Thanks for helping ship free, open dictation.
 

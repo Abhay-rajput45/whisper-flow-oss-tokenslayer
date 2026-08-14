@@ -45,7 +45,8 @@ function run() {
     var sn = (selfName || "").toLowerCase();
     if (sb && b && b === sb) return true;
     if (sn && n && n === sn) return true;
-    if (n === "electron" || b.indexOf("electron") !== -1) return true;
+    if (n === "electron" || n === "verbatim" || b.indexOf("electron") !== -1) return true;
+    if (n.indexOf("verbatim") !== -1 || b.indexOf("verbatim") !== -1) return true;
     if (n.indexOf("whisper-flow") !== -1 || n.indexOf("whisperflow") !== -1) return true;
     if (b.indexOf("whisper-flow") !== -1 || b.indexOf("whisperflow") !== -1) return true;
     return false;

@@ -45,8 +45,10 @@ function toneForBundleId(bundleId: string, appName = ""): Tone {
   const name = appName.toLowerCase().trim();
   if (
     name === "electron" ||
+    name === "verbatim" ||
     id.includes("electron") ||
-    name.includes("whisper-flow")
+    name.includes("whisper-flow") ||
+    name.includes("verbatim")
   ) {
     return "neutral";
   }
@@ -90,6 +92,7 @@ assert.equal(toneForBundleId("com.apple.mail", "Mail"), "formal");
 assert.equal(toneForBundleId("com.apple.Safari", "Safari"), "neutral");
 assert.equal(toneForBundleId("com.google.Chrome", "Google Chrome"), "neutral");
 assert.equal(toneForBundleId("com.github.Electron", "Electron"), "neutral");
+assert.equal(toneForBundleId("", "Verbatim"), "neutral");
 assert.equal(toneForBundleId("com.microsoft.VSCode", "Code"), "neutral");
 
 // --- dictation clean ---

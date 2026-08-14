@@ -52,9 +52,11 @@ export function isSelfApp(name: string, bundleId: string): boolean {
   const b = bundleId.toLowerCase();
   return (
     n === "electron" ||
+    n === "verbatim" ||
     n.includes("whisper-flow") ||
     n.includes("whisperflow") ||
     b.includes("electron") ||
+    b.includes("verbatim") ||
     b.includes("whisper-flow") ||
     b.includes("whisperflow")
   );

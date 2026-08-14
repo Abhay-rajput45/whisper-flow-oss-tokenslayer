@@ -16,7 +16,7 @@ export const DEFAULT_DICTIONARY: string[] = [
   "PyAI",
   "JustCall",
   "SaaS Labs",
-  "WhisperFlow",
+  "Verbatim",
   "Hear",
   "NFuse",
   "Omni",
@@ -40,8 +40,8 @@ const DEFAULT_MISHEARS: Array<{ prefer: string; aliases: string[] }> = [
     aliases: ["sass labs", "saas labs", "sauce labs", "saas lab"],
   },
   {
-    prefer: "WhisperFlow",
-    aliases: ["whisper flow", "whisperflow", "whisper flo"],
+    prefer: "Verbatim",
+    aliases: ["verbatim", "whisper flow", "whisperflow", "whisper flo"],
   },
   {
     prefer: "NFuse",

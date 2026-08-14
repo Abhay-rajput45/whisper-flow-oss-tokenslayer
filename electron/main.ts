@@ -44,6 +44,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config({ path: path.join(process.cwd(), ".env") });
 
+app.setName("Verbatim");
+
 const isDev = !app.isPackaged;
 let quitting = false;
 let overlayWin: BrowserWindow | null = null;
@@ -234,7 +236,7 @@ function createSettingsWindow(): BrowserWindow {
     width: 520,
     height: 720,
     show: false,
-    title: "WhisperFlow OSS",
+    title: "Verbatim",
     icon: loadAppIcon(256),
     webPreferences: {
       preload: preloadPath(),
@@ -311,7 +313,7 @@ function createTray(): void {
   // Menu bar icons are small; 22px looks crisp on Retina when Electron scales
   const img = loadAppIcon(22);
   tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
-  tray.setToolTip("WhisperFlow OSS");
+  tray.setToolTip("Verbatim");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
@@ -651,7 +653,7 @@ app.whenReady().then(() => {
   if (!resolveApiKey()) settingsWin.show();
 
   console.log(
-    `WhisperFlow OSS ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
+    `Verbatim ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
   );
   console.log(
     `  STT    : PyAI Hear ${resolveApiKey() ? "(key set)" : "(NO KEY)"}\n` +
