@@ -2,10 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
 import {
-  DEFAULT_DICTIONARY,
-  dictionaryOrDefault,
+  isDefaultDictionaryTerm,
   mergeDictionary,
   normalizeDictionary,
+  userDictionaryOnly,
 } from "./dictation-clean";
 
 export type AppSettings = {
@@ -14,6 +14,7 @@ export type AppSettings = {
   /** Gemini key — polish only. Separate so one bad key can't break both legs. */
   geminiApiKey: string;
   hotkey: string;
+  /** User-added terms only (built-in defaults live in code, not here). */
   dictionary: string[];
   polishTimeoutMs: number;
 };
@@ -22,7 +23,7 @@ export const DEFAULTS: AppSettings = {
   apiKey: "",
   geminiApiKey: "",
   hotkey: "Alt+Space",
-  dictionary: [...DEFAULT_DICTIONARY],
+  dictionary: [],
   polishTimeoutMs: 2000,
 };
 
@@ -52,17 +53,17 @@ function clampPolishTimeout(n: unknown): number {
 export function loadSettings(): AppSettings {
   const file = settingsPath();
   try {
-    if (!fs.existsSync(file)) return { ...DEFAULTS, dictionary: [...DEFAULT_DICTIONARY] };
+    if (!fs.existsSync(file)) return { ...DEFAULTS };
     const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<AppSettings>;
     return {
       ...DEFAULTS,
       ...raw,
-      // Empty array (or missing) seeds the hackathon defaults
-      dictionary: dictionaryOrDefault(raw.dictionary),
+      // Strip built-in defaults if an older build saved them into settings.json
+      dictionary: userDictionaryOnly(raw.dictionary),
       polishTimeoutMs: clampPolishTimeout(raw.polishTimeoutMs),
     };
   } catch {
-    return { ...DEFAULTS, dictionary: [...DEFAULT_DICTIONARY] };
+    return { ...DEFAULTS };
   }
 }
 
@@ -73,17 +74,19 @@ export function saveSettings(next: AppSettings): AppSettings {
     apiKey: String(next.apiKey ?? "").slice(0, 512),
     geminiApiKey: String(next.geminiApiKey ?? "").slice(0, 512),
     hotkey: String(next.hotkey ?? DEFAULTS.hotkey).slice(0, 64),
-    dictionary: normalizeDictionary(next.dictionary),
+    dictionary: userDictionaryOnly(next.dictionary),
     polishTimeoutMs: clampPolishTimeout(next.polishTimeoutMs),
   };
   fs.writeFileSync(file, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
   return toWrite;
 }
 
-/** Merge new jargon into the saved dictionary (capped). */
+/** Merge new jargon into the saved dictionary (capped). Skips built-in defaults. */
 export function learnIntoSettings(additions: string[]): AppSettings {
   const current = loadSettings();
-  const merged = mergeDictionary(current.dictionary, additions);
+  const custom = additions.filter((t) => !isDefaultDictionaryTerm(t));
+  if (custom.length === 0) return current;
+  const merged = mergeDictionary(current.dictionary, custom);
   const same =
     merged.length === current.dictionary.length &&
     merged.every((t, i) => t === current.dictionary[i]);

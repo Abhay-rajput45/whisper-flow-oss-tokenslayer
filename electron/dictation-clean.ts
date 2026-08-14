@@ -230,3 +230,23 @@ export function dictionaryOrDefault(dictionary: unknown): string[] {
   if (normalized.length === 0) return [...DEFAULT_DICTIONARY];
   return normalized;
 }
+
+const DEFAULT_KEYS = new Set(
+  DEFAULT_DICTIONARY.map((t) => t.toLowerCase()),
+);
+
+/** Persist/UI list — built-in defaults are excluded. */
+export function userDictionaryOnly(dictionary: unknown): string[] {
+  return normalizeDictionary(dictionary).filter(
+    (t) => !DEFAULT_KEYS.has(t.toLowerCase()),
+  );
+}
+
+/** Runtime cleanup/polish list — built-in defaults + user terms. */
+export function effectiveDictionary(userDictionary: unknown): string[] {
+  return mergeDictionary(DEFAULT_DICTIONARY, normalizeDictionary(userDictionary));
+}
+
+export function isDefaultDictionaryTerm(term: string): boolean {
+  return DEFAULT_KEYS.has(String(term ?? "").trim().toLowerCase());
+}

@@ -25,7 +25,11 @@ import {
 } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
 import { polishText, polishModel, type PolishInput } from "./polish";
-import { extractLearnableTerms, normalizeDictionary } from "./dictation-clean";
+import {
+  extractLearnableTerms,
+  effectiveDictionary,
+  userDictionaryOnly,
+} from "./dictation-clean";
 import type { Tone } from "./tones";
 import {
   setHearTarget,
@@ -359,7 +363,7 @@ async function togglePtt(): Promise<void> {
           toneHint: front.tone,
           bundleId: front.bundleId,
           appName: front.name,
-          dictionary: settings.dictionary,
+          dictionary: effectiveDictionary(settings.dictionary),
           polishTimeoutMs: settings.polishTimeoutMs,
         });
       }
@@ -423,7 +427,7 @@ function wireIpc(): void {
       }
     }
     if (patch.dictionary) {
-      patch.dictionary = normalizeDictionary(patch.dictionary);
+      patch.dictionary = userDictionaryOnly(patch.dictionary);
     }
     if (patch.hotkey !== undefined) {
       patch.hotkey = String(patch.hotkey).trim().slice(0, 64);
@@ -471,8 +475,9 @@ function wireIpc(): void {
       ? blobs.map((b) => String(b ?? "")).filter(Boolean)
       : [];
     const additions: string[] = [];
+    const known = effectiveDictionary(settings.dictionary);
     for (const text of texts) {
-      additions.push(...extractLearnableTerms(text, settings.dictionary));
+      additions.push(...extractLearnableTerms(text, known));
     }
     if (additions.length === 0) return { ok: true, added: 0 };
     settings = learnIntoSettings(additions);
@@ -485,7 +490,7 @@ function wireIpc(): void {
       typeof input?.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
         ? input.timeoutMs
         : settings.polishTimeoutMs;
-    const dictionary = normalizeDictionary(
+    const dictionary = effectiveDictionary(
       Array.isArray(input?.dictionary) && input.dictionary.length > 0
         ? input.dictionary
         : settings.dictionary,
