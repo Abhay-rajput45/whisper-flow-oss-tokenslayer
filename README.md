@@ -4,7 +4,6 @@
 
 Built for a hackathon on [PyAI Hear streaming](https://docs.pyai.com/use-cases/build-your-own-wispr-flow) (first partial ~185–205 ms in-region) plus a fast polish pass for fillers, punctuation, app-aware tone, and your jargon dictionary.
 
-> Wispr Flow is the polished consumer product. This is the OSS skeleton: one hotkey, every app, minutes that compound.
 
 <p align="center">
   <img src="assets/settings-window.jpg" alt="Verbatim Settings window — API keys, polish provider, and hotkey" width="720" />
@@ -14,7 +13,7 @@ Built for a hackathon on [PyAI Hear streaming](https://docs.pyai.com/use-cases/b
 ## Demo (60 seconds)
 
 1. Open **Slack**, focus a message box.
-2. Tap **⌥ Space** (default) → speak like a normal person: *“um hey can we um push the Tokenslayer demo to Friday actually Thursday”*.
+2. Tap **⌥ Space** (default) → speak like a normal person: *“now that everyone is aligned lets um circle back on this tomorrow”*.
 3. Grey words appear in the floating HUD while you talk.
 4. Tap **⌥ Space** again → polish runs (≤400 ms or raw fallback) → clean casual text pastes at the caret.
 5. Repeat in **Mail** → same ramble lands more formal.
@@ -75,12 +74,6 @@ release → {"type":"commit"} → NFuse polish (tone + dictionary) → Cmd+V
 ## Hotkey
 
 Default: `Alt+Space`. **Tap to start / tap to finish** (Electron `globalShortcut` has no reliable key-up). Change it in Settings (e.g. `Command+Shift+Space`, `F6`).
-
-## Security
-
-- Never commit `.env` or real keys.
-- Settings file is written mode `0600` under Electron userData.
-- The key is passed to the overlay renderer only for the active Hear/polish session; it is not logged.
 
 ## Stack
 
