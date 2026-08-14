@@ -25,7 +25,12 @@ import {
 } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
 import { installLogging } from "./logging";
-import { polishText, polishModel, type PolishInput } from "./polish";
+import {
+  polishText,
+  polishModel,
+  polishStatus,
+  type PolishInput,
+} from "./polish";
 import {
   extractLearnableTerms,
   effectiveDictionary,
@@ -557,12 +562,12 @@ function wireIpc(): void {
       appName: String(input?.appName ?? "").slice(0, 64),
     });
     // Dev only — never log polished text in a packaged build.
+    // Report what actually happened; the key may come from TEXT_LLM_API_KEY,
+    // which `key` (the Settings/GEMINI_API_KEY fallback) does not reflect.
     if (isDev) {
-      const why = !key
-        ? "NO KEY (local cleanup only)"
-        : result.polished
-          ? "polished"
-          : `fell back to local cleanup (budget ${timeoutMs}ms)`;
+      const why = result.polished
+        ? "polished"
+        : `local cleanup only (budget ${timeoutMs}ms)`;
       console.log(`[polish] ${why} in ${result.ms}ms via ${polishModel()}`);
     }
     return result;
@@ -659,10 +664,15 @@ app.whenReady().then(() => {
   console.log(
     `Verbatim ready. Hotkey: ${settings.hotkey || "Alt+Space"} (tap to start / tap to finish)`,
   );
+  const polish = polishStatus(resolvePolishKey());
   console.log(
     `  STT    : PyAI Hear ${resolveApiKey() ? "(key set)" : "(NO KEY)"}\n` +
-      `  polish : ${polishModel()} ` +
-      `${resolvePolishKey() ? "(key set)" : "(NO KEY — will paste raw text)"}`,
+      `  polish : ${polish.model} ` +
+      `${
+        polish.ready
+          ? "(configured)"
+          : `(NOT CONFIGURED — set ${polish.missing.join(", ")}; will paste locally cleaned text)`
+      }`,
   );
 });
 

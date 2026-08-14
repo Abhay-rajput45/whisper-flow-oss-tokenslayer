@@ -42,6 +42,29 @@ export function polishModel(): string {
   );
 }
 
+/**
+ * Config summary for startup diagnostics.
+ * `fallbackKey` is the Settings/GEMINI_API_KEY value, used only when
+ * TEXT_LLM_API_KEY is unset — so callers must not test that key directly.
+ */
+export function polishStatus(fallbackKey = ""): {
+  model: string;
+  ready: boolean;
+  missing: string[];
+} {
+  const cfg = resolveLlmEndpoint({
+    apiKey: fallbackKey,
+    timeoutMs: 0,
+    env: process.env,
+  });
+  const missing = missingEndpointFields(cfg);
+  return {
+    model: cfg.model || "not configured",
+    ready: missing.length === 0,
+    missing,
+  };
+}
+
 const TONE_INSTRUCTIONS: Record<Tone, string> = {
   casual:
     "Tone: casual chat (Slack/IM). Natural, concise, friendly. contractions OK. No corporate fluff. Light punctuation.",
