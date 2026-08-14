@@ -9,7 +9,10 @@ import {
 } from "./dictation-clean";
 
 export type AppSettings = {
+  /** PyAI key — streaming STT (Hear) only. */
   apiKey: string;
+  /** Gemini key — polish only. Separate so one bad key can't break both legs. */
+  geminiApiKey: string;
   hotkey: string;
   dictionary: string[];
   polishTimeoutMs: number;
@@ -17,9 +20,10 @@ export type AppSettings = {
 
 export const DEFAULTS: AppSettings = {
   apiKey: "",
+  geminiApiKey: "",
   hotkey: "Alt+Space",
   dictionary: [...DEFAULT_DICTIONARY],
-  polishTimeoutMs: 700,
+  polishTimeoutMs: 2000,
 };
 
 function settingsPath(): string {
@@ -66,10 +70,11 @@ export function saveSettings(next: AppSettings): AppSettings {
   const file = settingsPath();
   ensureDir(file);
   const toWrite: AppSettings = {
-    apiKey: String(next.apiKey ?? "").slice(0, 512),
+    apiKey: String(next.apiKey ?? "").slice(0, 256),
+    geminiApiKey: String(next.geminiApiKey ?? "").slice(0, 256),
     hotkey: String(next.hotkey ?? DEFAULTS.hotkey).slice(0, 64),
     dictionary: normalizeDictionary(next.dictionary),
-    polishTimeoutMs: clampPolishTimeout(next.polishTimeoutMs),
+    polishTimeoutMs: next.polishTimeoutMs ?? DEFAULTS.polishTimeoutMs,
   };
   fs.writeFileSync(file, JSON.stringify(toWrite, null, 2), { mode: 0o600 });
   return toWrite;

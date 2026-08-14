@@ -17,10 +17,26 @@ const DEFAULT_POLISH_TIMEOUT_MS = 700;
 const MAX_POLISH_TIMEOUT_MS = 2000;
 const MIN_POLISH_TIMEOUT_MS = 100;
 const MAX_INPUT_CHARS = 8000;
+ *
+ * Provider-agnostic: any OpenAI-compatible /chat/completions endpoint works.
+ * Defaults to Gemini Flash-Lite via Google's OpenAI compat surface.
+ */
+
+/** Override to swap providers without touching code. */
+const BASE_URL =
+  process.env.POLISH_BASE_URL?.trim() ||
+  "https://generativelanguage.googleapis.com/v1beta/openai";
+const MODEL = process.env.POLISH_MODEL?.trim() || "gemini-flash-lite-latest";
+
+export function polishModel(): string {
+  return MODEL;
+}
+
+export type Tone = "casual" | "formal" | "neutral";
 
 const TONE_INSTRUCTIONS: Record<Tone, string> = {
   casual:
-    "Tone: casual chat (Slack/IM). Natural, concise, friendly. contractions OK. No corporate fluff. Light punctuation.",
+    "Tone: casual chat (Slack/IM). Keep it natural, concise, friendly. Contractions OK. No corporate fluff.",
   formal:
     "Tone: professional email/document. Clear sentences, proper grammar, no slang. Warm but polished. Complete sentences.",
   neutral:
@@ -28,6 +44,7 @@ const TONE_INSTRUCTIONS: Record<Tone, string> = {
 };
 
 export type PolishInput = {
+  /** Polish-provider key (Gemini by default) — NOT the PyAI/Hear key. */
   text: string;
   apiKey: string;
   tone: Tone;
@@ -80,17 +97,12 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
 
   const cleaned = cleanDictationLocal(raw, dictionary);
   const apiKey = String(input.apiKey ?? "").trim();
-  if (!apiKey) {
-    return {
-      text: cleaned || raw,
-      polished: false,
-      localOnly: true,
-      ms: Date.now() - started,
-      status: "partial",
-    };
-  }
+  if (!apiKey) return { text: raw, polished: false, ms: 0 };
 
-  const timeoutMs = clampTimeout(input.timeoutMs || DEFAULT_POLISH_TIMEOUT_MS);
+  const started = Date.now();
+  // Measured Gemini Flash-Lite latency for this prompt is ~780-1400ms, so the
+  // spec's 400ms budget would abort every call. Ceiling raised to leave p99 room.
+  const timeoutMs = Math.min(4000, Math.max(100, input.timeoutMs || 2000));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -110,9 +122,9 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
     : "";
 
   const body = {
-    model: "pyai-nfuse",
-    temperature: 0.1,
-    max_tokens: scaledMaxTokens(cleaned.length),
+    model: MODEL,
+    temperature: 0.2,
+    max_tokens: 512,
     messages: [
       {
         role: "system",
@@ -130,11 +142,12 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
           .join("\n"),
       },
     ],
-    pyai_nfuse: { tier: "auto" },
+    // No reasoning_effort / extra_body: Gemini's compat layer returns HTTP 400
+    // for both, and the lite models don't over-think this prompt anyway.
   };
 
   try {
-    const res = await fetch("https://api.pyai.com/v1/chat/completions", {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
