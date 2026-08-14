@@ -6,6 +6,11 @@ Built for a hackathon on [PyAI Hear streaming](https://docs.pyai.com/use-cases/b
 
 > Wispr Flow is the polished consumer product. This is the OSS skeleton: one hotkey, every app, minutes that compound.
 
+<p align="center">
+  <img src="assets/settings-window.jpg" alt="Verbatim Settings window — API keys, polish provider, and hotkey" width="720" />
+</p>
+<p align="center"><em>Settings: bring your own keys, point polish at any OpenAI-compatible endpoint, pick your hotkey.</em></p>
+
 ## Demo (60 seconds)
 
 1. Open **Slack**, focus a message box.
