@@ -15,11 +15,15 @@ let dictionary: string[] = [];
 let apiKeyDirty = false;
 let geminiKeyDirty = false;
 
-function showToast(msg: string): void {
+function showToast(msg: string, kind: "ok" | "error" = "ok"): void {
   toast.textContent = msg;
+  toast.classList.toggle("error", kind === "error");
   setTimeout(() => {
-    if (toast.textContent === msg) toast.textContent = "";
-  }, 2500);
+    if (toast.textContent === msg) {
+      toast.textContent = "";
+      toast.classList.remove("error");
+    }
+  }, kind === "error" ? 4500 : 2500);
 }
 
 function renderDict(): void {
@@ -109,16 +113,71 @@ document.getElementById("save")!.addEventListener("click", async () => {
       patch.geminiApiKey = geminiKeyEl.value.trim();
     }
     await window.whisperFlow.saveSettings(patch);
+    const result = await saveHotkeyPatch(patch);
     apiKeyDirty = false;
     geminiKeyDirty = false;
     apiKeyEl.value = "";
     geminiKeyEl.value = "";
     await load();
-    showToast("Saved");
+    if (!result.ok) {
+      showToast(result.error || "Invalid hotkey — could not bind that shortcut", "error");
+      return;
+    }
+    showToast(
+      result.hotkeyRegistered === false
+        ? "Saved, but the hotkey could not be bound — check Accessibility"
+        : "Saved — hotkey and timeout are live",
+    );
   } catch (err) {
-    showToast(err instanceof Error ? err.message : "Save failed");
+    showToast(err instanceof Error ? err.message : "Save failed", "error");
   }
 });
+
+type SaveResult = {
+  ok: boolean;
+  hotkeyRegistered?: boolean;
+  error?: string;
+  hotkey?: string;
+  polishTimeoutMs?: number;
+};
+
+async function saveHotkeyPatch(
+  patch: Record<string, unknown>,
+): Promise<SaveResult> {
+  return (await window.whisperFlow.saveSettings(patch)) as SaveResult;
+}
+
+let applyTimer: ReturnType<typeof setTimeout> | null = null;
+function applyHotkeyAndTimeoutSoon(): void {
+  if (applyTimer) clearTimeout(applyTimer);
+  applyTimer = setTimeout(() => {
+    void (async () => {
+      try {
+        const result = await saveHotkeyPatch({
+          hotkey: hotkeyEl.value.trim() || "Alt+Space",
+          polishTimeoutMs: Number(polishEl.value) || 400,
+        });
+        if (!result.ok || result.hotkeyRegistered === false) {
+          showToast(
+            result.error || "Invalid hotkey — could not bind that shortcut",
+            "error",
+          );
+          if (result.hotkey) hotkeyEl.value = result.hotkey;
+        }
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Could not apply hotkey",
+          "error",
+        );
+      }
+    })();
+  }, 400);
+}
+
+hotkeyEl.addEventListener("change", applyHotkeyAndTimeoutSoon);
+hotkeyEl.addEventListener("blur", applyHotkeyAndTimeoutSoon);
+polishEl.addEventListener("change", applyHotkeyAndTimeoutSoon);
+polishEl.addEventListener("blur", applyHotkeyAndTimeoutSoon);
 
 document.getElementById("checkPerms")!.addEventListener("click", async () => {
   const perms = (await window.whisperFlow.checkPermissions()) as {

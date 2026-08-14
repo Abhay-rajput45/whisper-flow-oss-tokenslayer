@@ -15,6 +15,8 @@ const els = {
   pending: document.getElementById("pending")!,
   meta: document.getElementById("meta")!,
   root: document.getElementById("root")!,
+  cancelBtn: document.getElementById("cancelBtn") as HTMLButtonElement,
+  saveBtn: document.getElementById("saveBtn") as HTMLButtonElement,
 };
 
 let session = createSession();
@@ -26,6 +28,8 @@ let finishing = false;
 function paint(): void {
   els.committed.textContent = displayCommitted(session);
   els.pending.textContent = session.pending;
+  els.cancelBtn.disabled = finishing;
+  els.saveBtn.disabled = finishing;
   const parts: string[] = [];
   if (session.listening) parts.push("listening");
   if (session.firstPartialMs != null) {
@@ -63,7 +67,7 @@ async function waitForFlush(maxMs = 1200): Promise<void> {
 }
 
 async function startSession(p: PttStartPayload): Promise<void> {
-  if (finishing) return;
+  finishing = false;
   await stopCaptureOnly();
   payload = p;
   session = createSession();
@@ -98,11 +102,29 @@ async function stopCaptureOnly(): Promise<void> {
   mic = null;
 }
 
+async function cancelSession(): Promise<void> {
+  if (finishing) return;
+  finishing = true;
+  session = createSession();
+  payload = null;
+  els.committed.textContent = "";
+  els.pending.textContent = "";
+  els.meta.textContent = "";
+  try {
+    await window.whisperFlow.endListen("cancel");
+    await stopCaptureOnly();
+    parkHear(hear);
+    hear = null;
+  } finally {
+    finishing = false;
+  }
+}
+
 async function finishSession(): Promise<void> {
   if (finishing) return;
   finishing = true;
   session.listening = false;
-  paint();
+  await window.whisperFlow.endListen("commit");
 
   try {
     hear?.commit();
@@ -129,7 +151,7 @@ async function finishSession(): Promise<void> {
       text: raw,
       tone: payload.toneHint,
       dictionary: payload.dictionary ?? [],
-      timeoutMs: Math.max(payload.polishTimeoutMs ?? 400, 1200),
+      timeoutMs: payload.polishTimeoutMs ?? 400,
     });
 
     els.committed.textContent = result.text;
@@ -155,6 +177,17 @@ window.whisperFlow.onPttStart((p) => {
   void startSession(p);
 });
 window.whisperFlow.onPttStop(() => {
+  void finishSession();
+});
+
+els.cancelBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  void cancelSession();
+});
+els.saveBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   void finishSession();
 });
 

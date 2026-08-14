@@ -4,6 +4,18 @@ import { checkAccessibility, runOsascript } from "./permissions";
  * Paste clipboard into the focused app via Cmd+V.
  * Requires Accessibility permission for Electron/Terminal host.
  */
+export async function activateApp(appName?: string): Promise<void> {
+  if (process.platform !== "darwin") return;
+  const name = appName?.trim();
+  if (!name || name === "Unknown") return;
+  const safe = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  try {
+    await runOsascript(`tell application "${safe}" to activate`);
+  } catch {
+    /* best-effort */
+  }
+}
+
 export async function pasteViaAccessibility(opts?: {
   /** Bundle id or app name to activate before paste */
   activateAppName?: string;
@@ -18,16 +30,7 @@ export async function pasteViaAccessibility(opts?: {
     return false;
   }
   try {
-    const appName = opts?.activateAppName?.trim();
-    if (appName && appName !== "Unknown") {
-      // Escape quotes for AppleScript
-      const safe = appName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      try {
-        await runOsascript(`tell application "${safe}" to activate`);
-      } catch {
-        // Best-effort; continue to paste into whoever is frontmost
-      }
-    }
+    await activateApp(opts?.activateAppName);
     // Give the target app time to take focus (DevTools/overlay can steal it)
     await new Promise((r) => setTimeout(r, opts?.delayMs ?? 180));
     await runOsascript(

@@ -37,6 +37,8 @@ const api = {
     ipcRenderer.invoke("polish-text", input),
   pasteText: (text: string) => ipcRenderer.invoke("paste-text", text),
   hideOverlay: () => ipcRenderer.invoke("hide-overlay"),
+  endListen: (action: "cancel" | "commit") =>
+    ipcRenderer.invoke("end-listen", action),
   checkPermissions: () => ipcRenderer.invoke("check-permissions"),
   onPttStart: (cb: (payload: PttStartPayload) => void) => {
     const listener = (_: Electron.IpcRendererEvent, payload: PttStartPayload) =>

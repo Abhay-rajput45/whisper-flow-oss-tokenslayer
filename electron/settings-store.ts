@@ -12,7 +12,7 @@ export type AppSettings = {
   polishTimeoutMs: number;
 };
 
-const DEFAULTS: AppSettings = {
+export const DEFAULTS: AppSettings = {
   apiKey: "",
   geminiApiKey: "",
   hotkey: "Alt+Space",

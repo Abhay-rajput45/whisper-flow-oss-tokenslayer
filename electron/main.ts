@@ -7,7 +7,6 @@ import {
   Tray,
   Menu,
   nativeImage,
-  shell,
   screen,
   type NativeImage,
 } from "electron";
@@ -15,9 +14,9 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { pasteViaAccessibility } from "./paste";
+import { activateApp, pasteViaAccessibility } from "./paste";
 import { getFrontmostApp } from "./frontmost";
-import { loadSettings, saveSettings, type AppSettings } from "./settings-store";
+import { loadSettings, saveSettings, type AppSettings, DEFAULTS } from "./settings-store";
 import { checkAccessibility, ensurePermissions } from "./permissions";
 import { polishText, polishModel, type PolishInput } from "./polish";
 import type { Tone } from "./tones";
@@ -33,7 +32,7 @@ let overlayWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let pttHeld = false;
-let settings: AppSettings = loadSettings();
+let settings: AppSettings = { ...DEFAULTS };
 /** Frontmost app at PTT start — used to restore focus before paste */
 let targetAppName = "";
 
@@ -100,7 +99,8 @@ function createOverlayWindow(): BrowserWindow {
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
-    focusable: false,
+    focusable: true,
+    acceptFirstMouse: true,
     hasShadow: false,
     type: "panel",
     webPreferences: {
@@ -145,7 +145,7 @@ function ensureOverlay(): BrowserWindow {
 function createSettingsWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 520,
-    height: 680,
+    height: 720,
     show: false,
     title: "WhisperFlow OSS",
     icon: loadAppIcon(256),
@@ -204,15 +204,19 @@ function showOverlay(): void {
   }
 }
 
+function hideOverlayNow(): void {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  try {
+    overlayWin.hide();
+  } catch {
+    /* ignore */
+  }
+}
+
 function hideOverlaySoon(ms = 800): void {
   setTimeout(() => {
     if (pttHeld) return;
-    if (!overlayWin || overlayWin.isDestroyed()) return;
-    try {
-      if (overlayWin.isVisible()) overlayWin.hide();
-    } catch {
-      /* ignore */
-    }
+    hideOverlayNow();
   }, ms);
 }
 
@@ -237,15 +241,6 @@ function createTray(): void {
       },
       { type: "separator" },
       {
-        label: "Docs (PyAI Hear)",
-        click: () => {
-          void shell.openExternal(
-            "https://docs.pyai.com/use-cases/build-your-own-wispr-flow",
-          );
-        },
-      },
-      { type: "separator" },
-      {
         label: "Quit",
         click: () => {
           quitting = true;
@@ -261,14 +256,28 @@ function createTray(): void {
   });
 }
 
+function looksLikeAccelerator(raw: string): boolean {
+  const parts = raw.split("+").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return false;
+  return parts.every((p) => /^[A-Za-z0-9]+$/.test(p) || p.length === 1);
+}
+
 function registerHotkey(): boolean {
+  const accelerator = settings.hotkey?.trim() || DEFAULTS.hotkey;
+  if (!looksLikeAccelerator(accelerator)) return false;
   globalShortcut.unregisterAll();
-  const accelerator = settings.hotkey || "Alt+Space";
-  const ok = globalShortcut.register(accelerator, () => {
-    void togglePtt();
-  });
-  if (!ok) console.error("Failed to register hotkey:", accelerator);
-  return ok;
+  try {
+    const ok = globalShortcut.register(accelerator, () => {
+      void togglePtt();
+    });
+    if (!ok) {
+      console.error("Failed to register hotkey:", accelerator);
+    }
+    return ok;
+  } catch {
+    console.error("Invalid hotkey:", accelerator);
+    return false;
+  }
 }
 
 /** Tap to start / tap to finish (Electron globalShortcut has no keyup). */
@@ -368,16 +377,39 @@ function wireIpc(): void {
         .slice(0, 200)
         .map((d) => d.slice(0, 64));
     }
-    if (patch.hotkey) patch.hotkey = String(patch.hotkey).slice(0, 64);
+    if (patch.hotkey !== undefined) {
+      patch.hotkey = String(patch.hotkey).trim().slice(0, 64);
+    }
     if (patch.polishTimeoutMs !== undefined) {
       const n = Number(patch.polishTimeoutMs);
       patch.polishTimeoutMs = Number.isFinite(n)
         ? Math.min(4000, Math.max(100, Math.round(n)))
         : 2000;
     }
+    const prevHotkey = settings.hotkey;
+    const requestedHotkey = patch.hotkey;
     settings = saveSettings({ ...settings, ...patch });
-    registerHotkey();
-    return { ok: true };
+    const hotkeyRegistered = registerHotkey();
+    if (!hotkeyRegistered && requestedHotkey && requestedHotkey !== prevHotkey) {
+      settings = saveSettings({ ...settings, hotkey: prevHotkey });
+      registerHotkey();
+      const invalid = !looksLikeAccelerator(String(requestedHotkey));
+      return {
+        ok: false,
+        hotkeyRegistered: false,
+        error: invalid
+          ? `Invalid hotkey “${requestedHotkey}”. Use Alt+Space, Command+Shift+Space, or F6.`
+          : `Could not bind “${requestedHotkey}” (in use or reserved). Kept ${prevHotkey}.`,
+        hotkey: prevHotkey,
+        polishTimeoutMs: settings.polishTimeoutMs,
+      };
+    }
+    return {
+      ok: true,
+      hotkeyRegistered,
+      hotkey: settings.hotkey,
+      polishTimeoutMs: settings.polishTimeoutMs,
+    };
   });
 
   ipcMain.handle("get-frontmost", async () => getFrontmostApp());
@@ -393,7 +425,7 @@ function wireIpc(): void {
       dictionary: Array.isArray(input?.dictionary)
         ? input.dictionary.map(String).slice(0, 200)
         : [],
-      timeoutMs: budget,
+      timeoutMs: settings.polishTimeoutMs,
     });
     // "Polish looks like it didn't run" is indistinguishable from "it ran fast"
     // without this. Dev only — never log polished text in a packaged build.
@@ -416,9 +448,7 @@ function wireIpc(): void {
     if (!plain) return { ok: false, reason: "empty" };
 
     // Hide overlay first so Cmd+V lands in the user's editor
-    if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
-      overlayWin.hide();
-    }
+    hideOverlayNow();
 
     clipboard.writeText(plain);
     const pasted = await pasteViaAccessibility({
@@ -430,13 +460,28 @@ function wireIpc(): void {
   });
 
   ipcMain.handle("hide-overlay", () => {
-    hideOverlaySoon(0);
+    pttHeld = false;
+    hideOverlayNow();
   });
 
-  ipcMain.handle("check-permissions", async () => ensurePermissions());
+  ipcMain.handle("end-listen", async (_e, action: unknown) => {
+    pttHeld = false;
+    hideOverlayNow();
+    if (action === "cancel") {
+      await activateApp(targetAppName);
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle("check-permissions", async () => {
+    const result = await ensurePermissions();
+    // Global shortcuts often start working only after Accessibility is granted
+    registerHotkey();
+    return result;
+  });
 
   ipcMain.on("overlay-resize", (_e, height: number) => {
-    if (!overlayWin || overlayWin.isDestroyed()) return;
+    if (!overlayWin || overlayWin.isDestroyed() || !overlayWin.isVisible()) return;
     try {
       const h = Math.min(280, Math.max(80, Math.round(height)));
       overlayWin.setSize(720, h);

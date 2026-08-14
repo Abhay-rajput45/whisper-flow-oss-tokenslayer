@@ -24,6 +24,9 @@ body {
 }
 
 .hud {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   margin: 8px 12px;
   padding: 14px 18px;
   border-radius: 14px;
@@ -33,6 +36,45 @@ body {
   -webkit-backdrop-filter: blur(18px);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   min-height: 56px;
+}
+
+.hud-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  -webkit-app-region: no-drag;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.icon-btn.cancel:hover {
+  background: rgba(248, 113, 113, 0.22);
+  color: #fecaca;
+}
+
+.icon-btn.save:hover {
+  background: rgba(45, 212, 191, 0.22);
+  color: var(--accent);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .line {

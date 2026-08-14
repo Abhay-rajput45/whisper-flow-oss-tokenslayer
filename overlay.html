@@ -8,11 +8,23 @@
   </head>
   <body>
     <div id="root" class="hud">
-      <div class="line">
-        <span id="committed" class="committed"></span>
-        <span id="pending" class="pending"></span>
+      <button type="button" id="cancelBtn" class="icon-btn cancel" aria-label="Cancel" title="Cancel">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+      <div class="hud-main">
+        <div class="line">
+          <span id="committed" class="committed"></span>
+          <span id="pending" class="pending"></span>
+        </div>
+        <div id="meta" class="meta"></div>
       </div>
-      <div id="meta" class="meta"></div>
+      <button type="button" id="saveBtn" class="icon-btn save" aria-label="Save and paste" title="Save and paste">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l5 5L19 7" />
+        </svg>
+      </button>
     </div>
     <script type="module" src="/src/overlay/main.ts"></script>
   </body>
