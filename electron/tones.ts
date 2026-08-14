@@ -2,41 +2,75 @@ export type Tone = "casual" | "formal" | "neutral";
 
 const CASUAL_BUNDLES = new Set([
   "com.tinyspeck.slackmacgap",
-  "com.apple.iChat",
-  "com.apple.MobileSMS",
-  "com.hnc.Discord",
-  "com.discordapp.Discord",
+  "com.slack.slack",
+  "com.slack",
+  "com.apple.ichat",
+  "com.apple.mobilesms",
+  "com.hnc.discord",
+  "com.discordapp.discord",
   "org.telegram.desktop",
-  "com.tdesktop.Telegram",
-  "net.whatsapp.WhatsApp",
-  "com.apple.FaceTime",
+  "com.tdesktop.telegram",
+  "net.whatsapp.whatsapp",
+  "com.apple.facetime",
 ]);
 
 const FORMAL_BUNDLES = new Set([
   "com.apple.mail",
-  "com.google.Chrome", // often Gmail — treated formal when name hints
-  "com.microsoft.Outlook",
-  "com.apple.Notes", // docs often formal
-  "com.microsoft.Word",
-  "com.apple.iWork.Pages",
+  "com.microsoft.outlook",
+  "com.apple.notes",
+  "com.microsoft.word",
+  "com.apple.iwork.pages",
   "md.obsidian",
+  "notion.id",
 ]);
 
+const BROWSER_BUNDLES = new Set([
+  "com.google.chrome",
+  "com.apple.safari",
+  "org.mozilla.firefox",
+  "company.thebrowser.browser",
+  "com.brave.browser",
+  "com.microsoft.edgemac",
+]);
+
+export function isSelfApp(name: string, bundleId: string): boolean {
+  const n = name.toLowerCase();
+  const b = bundleId.toLowerCase();
+  return (
+    n === "electron" ||
+    n.includes("whisper-flow") ||
+    n.includes("whisperflow") ||
+    b.includes("electron") ||
+    b.includes("whisper-flow") ||
+    b.includes("whisperflow")
+  );
+}
+
 export function toneForBundleId(bundleId: string, appName = ""): Tone {
-  const id = bundleId.toLowerCase();
-  const name = appName.toLowerCase();
-  if (CASUAL_BUNDLES.has(bundleId) || /slack|discord|telegram|whatsapp|messages|imessage/.test(name)) {
+  const id = bundleId.toLowerCase().trim();
+  const name = appName.toLowerCase().trim();
+
+  if (isSelfApp(name, id)) return "neutral";
+
+  if (
+    CASUAL_BUNDLES.has(id) ||
+    /slack|discord|telegram|whatsapp|messages|imessage|signal/.test(name)
+  ) {
     return "casual";
   }
-  if (
-    FORMAL_BUNDLES.has(bundleId) ||
-    /mail|outlook|gmail|word|pages|notion|docs/.test(name)
-  ) {
-    // Chrome alone is ambiguous — only formal if name suggests mail/docs
-    if (id === "com.google.chrome" && !/mail|gmail|docs|document/.test(name)) {
+
+  const looksFormalName = /mail|outlook|gmail|word|pages|notion|docs|document/.test(
+    name,
+  );
+  if (FORMAL_BUNDLES.has(id) || looksFormalName) {
+    if (
+      (BROWSER_BUNDLES.has(id) || /chrome|safari|firefox|edge|arc|brave/.test(name)) &&
+      !looksFormalName
+    ) {
       return "neutral";
     }
     return "formal";
   }
+
   return "neutral";
 }

@@ -103,3 +103,16 @@ export async function runOsascript(script: string): Promise<string> {
   });
   return stdout.trim();
 }
+
+/** Run a JavaScript for Automation (JXA) script. */
+export async function runJxa(script: string): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "osascript",
+    ["-l", "JavaScript", "-e", script],
+    {
+      timeout: 3000,
+      maxBuffer: 1024 * 64,
+    },
+  );
+  return stdout.trim();
+}

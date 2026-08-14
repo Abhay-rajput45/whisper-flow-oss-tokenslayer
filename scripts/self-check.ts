@@ -41,19 +41,30 @@ function onFinal(s: SessionState, text: string): void {
 type Tone = "casual" | "formal" | "neutral";
 
 function toneForBundleId(bundleId: string, appName = ""): Tone {
-  const id = bundleId.toLowerCase();
-  const name = appName.toLowerCase();
+  const id = bundleId.toLowerCase().trim();
+  const name = appName.toLowerCase().trim();
   if (
-    bundleId === "com.tinyspeck.slackmacgap" ||
+    name === "electron" ||
+    id.includes("electron") ||
+    name.includes("whisper-flow")
+  ) {
+    return "neutral";
+  }
+  if (
+    id === "com.tinyspeck.slackmacgap" ||
+    id === "com.slack.slack" ||
     /slack|discord|telegram|whatsapp|messages|imessage/.test(name)
   ) {
     return "casual";
   }
   if (
-    bundleId === "com.apple.mail" ||
+    id === "com.apple.mail" ||
     /mail|outlook|gmail|word|pages|notion|docs/.test(name)
   ) {
-    if (id === "com.google.chrome" && !/mail|gmail|docs|document/.test(name)) {
+    if (
+      (id === "com.google.chrome" || /chrome|safari/.test(name)) &&
+      !/mail|gmail|docs|document/.test(name)
+    ) {
       return "neutral";
     }
     return "formal";
@@ -74,7 +85,10 @@ onFinal(s, "next phrase");
 assert.equal(s.finals.join(" "), "hello there next phrase");
 
 assert.equal(toneForBundleId("com.tinyspeck.slackmacgap", "Slack"), "casual");
+assert.equal(toneForBundleId("com.slack.Slack", "Slack"), "casual");
 assert.equal(toneForBundleId("com.apple.mail", "Mail"), "formal");
 assert.equal(toneForBundleId("com.apple.Safari", "Safari"), "neutral");
+assert.equal(toneForBundleId("com.google.Chrome", "Google Chrome"), "neutral");
+assert.equal(toneForBundleId("com.github.Electron", "Electron"), "neutral");
 
 console.log("self-check ok");

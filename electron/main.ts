@@ -137,7 +137,7 @@ function ensureOverlay(): BrowserWindow {
 function createSettingsWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 520,
-    height: 680,
+    height: 720,
     show: false,
     title: "WhisperFlow OSS",
     icon: loadAppIcon(256),
